@@ -1,0 +1,120 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Script ID: OB-012
+
+---
+- name: Emergency PAM Configuration Rollback (Remote)
+  hosts: "{{ target_hosts }}"
+  become: yes
+  gather_facts: no
+  
+  # This playbook should be run with --ask-pass if SSH key auth is broken
+  # ansible-playbook rollback_pam_remote.yml -i hosts-development -e "target_hosts=ht-deb12-vanilla" --ask-pass --ask-become-pass
+  
+  pre_tasks:
+    - name: Validate target_hosts is provided
+      fail:
+        msg: |
+          CRITICAL: target_hosts variable is not set!
+          
+          Usage: ansible-playbook rollback_pam_remote.yml -i hosts-development -e "target_hosts=ht-deb12-vanilla" --ask-pass --ask-become-pass
+      when: target_hosts is not defined or target_hosts == ""
+    
+    - name: Display emergency rollback warning
+      debug:
+        msg: |
+          🚨 EMERGENCY PAM ROLLBACK 🚨
+          
+          This playbook will restore PAM configuration to fix broken SSH.
+          Only use this if SSH authentication is broken!
+          
+          Proceeding with rollback...
+  
+  tasks:
+    - name: Find and restore PAM configuration backups
+      shell: |
+        for config_file in /etc/pam.d/common-auth /etc/pam.d/common-account /etc/pam.d/common-password /etc/pam.d/common-session /etc/pam.d/login /etc/pam.d/sshd; do
+          if [ -f "$config_file" ]; then
+            echo "Checking $config_file..."
+            backup_file=$(ls -t ${config_file}.backup.* 2>/dev/null | head -1)
+            if [ -n "$backup_file" ]; then
+              echo "Restoring $config_file from $backup_file"
+              cp "$backup_file" "$config_file"
+              echo "✅ Restored $config_file"
+            else
+              echo "⚠️  No backup found for $config_file"
+            fi
+          fi
+        done
+      register: pam_restore_result
+      ignore_errors: yes
+
+    - name: Find and restore password configuration backups
+      shell: |
+        for config_file in /etc/login.defs /etc/security/pwquality.conf /etc/default/useradd; do
+          if [ -f "$config_file" ]; then
+            echo "Checking $config_file..."
+            backup_file=$(ls -t ${config_file}.backup.* 2>/dev/null | head -1)
+            if [ -n "$backup_file" ]; then
+              echo "Restoring $config_file from $backup_file"
+              cp "$backup_file" "$config_file"
+              echo "✅ Restored $config_file"
+            else
+              echo "⚠️  No backup found for $config_file"
+            fi
+          fi
+        done
+      register: password_restore_result
+      ignore_errors: yes
+
+    - name: Reset PAM tally (unlock accounts)
+      shell: pam_tally2 --user root --reset
+      ignore_errors: yes
+
+    - name: Test SSH configuration
+      shell: sshd -t
+      register: ssh_test_result
+      ignore_errors: yes
+
+    - name: Display rollback results
+      debug:
+        msg: |
+          === PAM ROLLBACK RESULTS ===
+          
+          PAM Configuration Restore:
+          {{ pam_restore_result.stdout_lines | default(['No output']) | join('\n') }}
+          
+          Password Configuration Restore:
+          {{ password_restore_result.stdout_lines | default(['No output']) | join('\n') }}
+          
+          SSH Configuration Test:
+          {{ 'PASSED' if ssh_test_result.rc == 0 else 'FAILED' }}
+          
+          === NEXT STEPS ===
+          1. Try SSH login again
+          2. If still broken, you need console access
+          3. Consider rebooting the server
+          
+          === IMPORTANT ===
+          Security hardening has been reverted!
+          Re-apply with caution after fixing root cause. 

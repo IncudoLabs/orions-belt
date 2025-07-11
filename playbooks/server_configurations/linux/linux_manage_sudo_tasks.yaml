@@ -1,0 +1,273 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+
+# Tasks for managing user sudo permissions
+# This file contains only tasks and can be included by other playbooks
+# Variables expected: action_type, sudo_user, sudo_method, sudo_type, specific_commands
+
+- name: Check if sudo is installed
+  command: which sudo
+  register: sudo_check
+  failed_when: false
+  changed_when: false
+
+- name: Install sudo if not present
+  include_tasks: install_sudo_tasks.yaml
+  when: sudo_check.rc != 0
+
+- name: Validate action_type input
+  fail:
+    msg: "Invalid action choice. Please enter 1 or 2."
+  when: action_type not in ["1", "2"]
+
+- name: Validate username is not empty
+  fail:
+    msg: "Username cannot be empty."
+  when: sudo_user == ""
+
+- name: Check if user exists in system
+  getent:
+    database: passwd
+    key: "{{ sudo_user }}"
+  register: user_check
+  failed_when: false
+
+- name: Fail if user doesn't exist
+  fail:
+    msg: "User '{{ sudo_user }}' does not exist in the system. Please add the user first using linux_add_system_login.yaml"
+  when: user_check.failed
+
+- name: Display user validation success
+  debug:
+    msg: "User '{{ sudo_user }}' found in system. Proceeding with sudo configuration..."
+
+- name: Check for sudo group existence
+  shell: "getent group sudo || getent group wheel"
+  register: sudo_group_check
+  failed_when: false
+  changed_when: false
+
+- name: Set sudo group name
+  set_fact:
+    sudo_group: "{{ 'sudo' if 'sudo' in sudo_group_check.stdout else 'wheel' }}"
+
+- name: Create sudo group if it doesn't exist
+  group:
+    name: "{{ sudo_group }}"
+    state: present
+  when: sudo_group_check.rc != 0
+
+- name: Handle sudo access removal
+  block:
+    - name: Get current user groups
+      shell: "groups {{ sudo_user }}"
+      register: user_groups
+      changed_when: false
+
+    - name: Remove user from sudo group if present
+      shell: "gpasswd -d {{ sudo_user }} {{ sudo_group }}"
+      when: sudo_group in user_groups.stdout
+      changed_when: true
+      register: group_removal
+
+    - name: Check for sudoers entries
+      shell: "grep -E '^{{ sudo_user }}' /etc/sudoers"
+      register: sudoers_check
+      failed_when: false
+      changed_when: false
+
+    - name: Remove existing sudoers entries for user
+      lineinfile:
+        path: /etc/sudoers
+        regexp: "^{{ sudo_user }} .*"
+        state: absent
+        validate: "visudo -cf %s"
+      register: sudoers_removal
+      when: sudoers_check.stdout != ""
+
+    - name: Display removal success message
+      debug:
+        msg: |
+          SUCCESS: Removed sudo access for user '{{ sudo_user }}'
+          {% if group_removal is defined and group_removal.changed %}
+          - Removed from {{ sudo_group }} group
+          {% endif %}
+          {% if sudoers_removal is defined and sudoers_removal.changed %}
+          - Removed from sudoers file
+          {% endif %}
+  when: action_type == "2"
+
+- name: Handle sudo group management
+  block:
+    - name: Add user to sudo group
+      shell: "usermod -aG {{ sudo_group }} {{ sudo_user }}"
+      changed_when: true
+
+    - name: Display sudo group action result
+      debug:
+        msg: "Added user '{{ sudo_user }}' to {{ sudo_group }} group"
+  when: action_type == "1" and sudo_method == "1"
+
+- name: Handle sudoers file management
+  block:
+    - name: Validate sudo_type input
+      fail:
+        msg: "Invalid choice. Please enter 1 or 2."
+      when: sudo_type not in ["1", "2"]
+
+    - name: Create sudoers entry for all commands (NOPASSWD)
+      block:
+        - name: Add user to sudoers with NOPASSWD for all commands
+          lineinfile:
+            path: /etc/sudoers
+            line: "{{ sudo_user }} ALL=(ALL) NOPASSWD: ALL"
+            validate: "visudo -cf %s"
+            state: present
+
+        - name: Display success message for all commands
+          debug:
+            msg: "SUCCESS: User '{{ sudo_user }}' granted passwordless sudo access for ALL commands"
+      when: sudo_type == "1"
+
+    - name: Create sudoers entry for specific commands (NOPASSWD)
+      block:
+        - name: Validate specific commands input
+          fail:
+            msg: "You must specify commands when choosing option 2"
+          when: specific_commands is not defined or specific_commands == ""
+
+        - name: Process and clean command list
+          set_fact:
+            clean_commands: "{{ specific_commands | replace(' ', '') | split(',') | map('trim') | list }}"
+
+        - name: Validate command paths
+          stat:
+            path: "{{ item }}"
+          register: command_check
+          loop: "{{ clean_commands }}"
+          failed_when: false
+
+        - name: Display command validation results
+          debug:
+            msg: "Command {{ item.item }}: {{ 'EXISTS' if item.stat.exists else 'NOT FOUND' }}"
+          loop: "{{ command_check.results }}"
+
+        - name: Warn about non-existent commands
+          debug:
+            msg: "WARNING: Some commands may not exist on this system. Proceeding anyway as they might be installed later."
+          when: command_check.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
+        - name: Create command string for sudoers
+          set_fact:
+            command_string: "{{ clean_commands | join(', ') }}"
+
+        - name: Add user to sudoers with NOPASSWD for specific commands
+          lineinfile:
+            path: /etc/sudoers
+            line: "{{ sudo_user }} ALL=(ALL) NOPASSWD: {{ command_string }}"
+            validate: "visudo -cf %s"
+            state: present
+
+        - name: Display success message for specific commands
+          debug:
+            msg: "SUCCESS: User '{{ sudo_user }}' granted passwordless sudo access for commands: {{ command_string }}"
+      when: sudo_type == "2"
+  when: action_type == "1" and sudo_method == "2"
+
+- name: Test sudo configuration
+  block:
+    - name: Prompt for sudo testing
+      pause:
+        prompt: "Do you want to test the sudo configuration? (y/n)"
+      register: test_prompt
+
+    - name: Test sudo access (sudo group)
+      become_user: "{{ sudo_user }}"
+      command: sudo -n whoami
+      register: sudo_test_group
+      failed_when: false
+      when: 
+        - test_prompt.user_input | lower == 'y'
+        - action_type == "1"
+        - sudo_method == "1"
+
+    - name: Test sudo access (all commands)
+      become_user: "{{ sudo_user }}"
+      command: sudo -n whoami
+      register: sudo_test_all
+      failed_when: false
+      when: 
+        - test_prompt.user_input | lower == 'y'
+        - action_type == "1"
+        - sudo_method == "2"
+        - sudo_type == "1"
+
+    - name: Test sudo access (specific command - first in list)
+      become_user: "{{ sudo_user }}"
+      command: "sudo -n {{ clean_commands[0] }} --help"
+      register: sudo_test_specific
+      failed_when: false
+      when: 
+        - test_prompt.user_input | lower == 'y'
+        - action_type == "1"
+        - sudo_method == "2"
+        - sudo_type == "2"
+
+    - name: Display test results (sudo group)
+      debug:
+        msg: "Sudo test result: {{ 'SUCCESS - sudo group access working' if sudo_test_group.rc == 0 else 'FAILED - check configuration' }}"
+      when: 
+        - test_prompt.user_input | lower == 'y'
+        - action_type == "1"
+        - sudo_method == "1"
+
+    - name: Display test results (all commands)
+      debug:
+        msg: "Sudo test result: {{ 'SUCCESS - passwordless sudo working' if sudo_test_all.rc == 0 else 'FAILED - check configuration' }}"
+      when: 
+        - test_prompt.user_input | lower == 'y'
+        - action_type == "1"
+        - sudo_method == "2"
+        - sudo_type == "1"
+
+    - name: Display test results (specific commands)
+      debug:
+        msg: "Sudo test result: {{ 'SUCCESS - passwordless sudo working for specific commands' if sudo_test_specific.rc == 0 else 'FAILED - check configuration or command path' }}"
+      when: 
+        - test_prompt.user_input | lower == 'y'
+        - action_type == "1"
+        - sudo_method == "2"
+        - sudo_type == "2"
+
+- name: Display sudo configuration summary
+  debug:
+    msg:
+      - "============================================"
+      - "SUDO CONFIGURATION COMPLETED"
+      - "============================================"
+      - "User: {{ sudo_user }}"
+      - "Action: {{ 'Added' if action_type == '1' else 'Removed' }} sudo access"
+      - "{{ 'Method: ' + ('sudo group' if sudo_method == '1' else 'sudoers file') if action_type == '1' else '' }}"
+      - "{{ 'Access Type: ' + ('All commands (NOPASSWD)' if sudo_type == '1' else 'Specific commands (NOPASSWD)') if action_type == '1' and sudo_method == '2' else '' }}"
+      - "{{ 'Commands: ' + command_string if action_type == '1' and sudo_method == '2' and sudo_type == '2' else '' }}"
+      - "============================================" 

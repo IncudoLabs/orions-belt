@@ -1,0 +1,145 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Script ID: OB-001
+
+---
+- name: Disable Unnecessary Kernel Modules for Security Hardening
+  hosts: "{{ target_hosts }}"
+  become: yes
+  gather_facts: yes
+  
+  pre_tasks:
+    - name: Validate target_hosts is provided
+      fail:
+        msg: |
+          CRITICAL SECURITY ERROR: target_hosts variable is not set!
+          
+          This playbook requires explicit specification of target hosts to prevent
+          accidental execution on unintended systems.
+          
+          Usage: ansible-playbook disable_unnecessary_kernel_modules.yml --extra-vars "target_hosts=your_hosts"
+          
+          Examples:
+          - target_hosts=webservers
+          - target_hosts=db_servers
+          - target_hosts=192.168.1.10
+          - target_hosts=server1,server2,server3
+      when: target_hosts is not defined or target_hosts == ""
+  
+  vars:
+    # List of kernel modules to disable
+    modules_to_disable:
+      - cramfs      # 33000 - Ensure mounting of cramfs filesystems is disabled
+      - freevxfs    # 33001 - Ensure mounting of freevxfs filesystems is disabled
+      - jffs2       # 33002 - Ensure mounting of jffs2 filesystems is disabled
+      - hfs         # 33003 - Ensure mounting of hfs filesystems is disabled
+      - hfsplus     # 33004 - Ensure mounting of hfsplus filesystems is disabled
+      - squashfs    # 33005 - Ensure mounting of squashfs filesystems is disabled
+      - udf         # 33006 - Ensure mounting of udf filesystems is disabled
+      - usb-storage # 33024 - Disable USB Storage
+      - dccp        # 33078 - Ensure DCCP is disabled
+      - sctp        # 33079 - Ensure SCTP is disabled
+      - rds         # 33080 - Ensure RDS is disabled
+      - tipc        # 33081 - Ensure TIPC is disabled
+
+  tasks:
+    - name: Check if modules are currently loaded
+      shell: lsmod | grep -E "{{ item }}" || echo "not_loaded"
+      register: module_status
+      loop: "{{ modules_to_disable }}"
+      changed_when: false
+
+    - name: Unload currently loaded modules
+      modprobe:
+        name: "{{ item.item }}"
+        state: absent
+      when: "'not_loaded' not in item.stdout"
+      loop: "{{ module_status.results }}"
+      register: unload_results
+
+    - name: Create /etc/modprobe.d directory if it doesn't exist
+      file:
+        path: /etc/modprobe.d
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Disable kernel modules by creating blacklist entries
+      lineinfile:
+        path: /etc/modprobe.d/security-hardening.conf
+        line: "install {{ item }} /bin/true"
+        create: yes
+        mode: '0644'
+        owner: root
+        group: root
+      loop: "{{ modules_to_disable }}"
+      register: blacklist_results
+
+    - name: Add blacklist entries for additional security
+      lineinfile:
+        path: /etc/modprobe.d/security-hardening.conf
+        line: "blacklist {{ item }}"
+        create: yes
+        mode: '0644'
+        owner: root
+        group: root
+      loop: "{{ modules_to_disable }}"
+      register: blacklist_results_2
+
+    - name: Update initramfs to apply changes
+      command: update-initramfs -u -k all
+      when: blacklist_results.changed or blacklist_results_2.changed
+      register: initramfs_update
+
+    - name: Verify modules are disabled
+      shell: modprobe -n -v {{ item }}
+      register: verification_results
+      loop: "{{ modules_to_disable }}"
+      changed_when: false
+
+    - name: Display verification results
+      debug:
+        msg: "{{ item.item }}: {{ 'DISABLED' if 'install /bin/true' in item.stdout else 'NOT DISABLED' }}"
+      loop: "{{ verification_results.results }}"
+
+  handlers:
+    - name: Reboot system if required
+      reboot:
+        msg: "Rebooting system to apply kernel module changes"
+        connect_timeout: 5
+        reboot_timeout: 300
+        pre_reboot_delay: 0
+        post_reboot_delay: 30
+        test_command: whoami
+      listen: "reboot required"
+
+  post_tasks:
+    - name: Check if reboot is required
+      stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+
+    - name: Trigger reboot if required
+      meta: flush_handlers
+      when: reboot_required_file.stat.exists or initramfs_update.changed 

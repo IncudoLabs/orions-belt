@@ -1,0 +1,177 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Script ID: OB-003
+
+---
+- name: Configure Partition Mount Options for Security Hardening
+  hosts: "{{ target_hosts }}"
+  become: yes
+  gather_facts: yes
+  
+  pre_tasks:
+    - name: Validate target_hosts is provided
+      fail:
+        msg: |
+          CRITICAL SECURITY ERROR: target_hosts variable is not set!
+          
+          This playbook requires explicit specification of target hosts to prevent
+          accidental execution on unintended systems.
+          
+          Usage: ansible-playbook configure_partitions.yml --extra-vars "target_hosts=your_hosts"
+          
+          Examples:
+          - target_hosts=webservers
+          - target_hosts=db_servers
+          - target_hosts=192.168.1.10
+          - target_hosts=server1,server2,server3
+      when: target_hosts is not defined or target_hosts == ""
+  
+  vars:
+    # Partition configurations with security options
+    partition_configs:
+      - path: /tmp
+        options: "nodev,nosuid,noexec"
+        fstab_line: "/tmp /tmp tmpfs defaults,nodev,nosuid,noexec 0 0"
+        control: "33007"
+      - path: /var/tmp
+        options: "nodev,nosuid,noexec"
+        fstab_line: "/var/tmp /var/tmp tmpfs defaults,nodev,nosuid,noexec 0 0"
+        control: "33014"
+      - path: /dev/shm
+        options: "nodev,nosuid,noexec"
+        fstab_line: "tmpfs /dev/shm tmpfs defaults,nodev,nosuid,noexec 0 0"
+        control: "33022"
+
+  tasks:
+    - name: Create backup of /etc/fstab
+      copy:
+        src: /etc/fstab
+        dest: /etc/fstab.backup.{{ ansible_date_time.epoch }}
+        remote_src: yes
+        mode: '0644'
+        owner: root
+        group: root
+
+    - name: Check current mount points using shell command
+      shell: mount | grep "{{ item.path }}" || echo "not_mounted"
+      register: mount_status
+      loop: "{{ partition_configs }}"
+      changed_when: false
+
+    - name: Configure /tmp partition with security options
+      mount:
+        path: /tmp
+        src: /tmp
+        fstype: tmpfs
+        opts: "nodev,nosuid,noexec"
+        state: mounted
+      register: tmp_mount
+
+    - name: Configure /var/tmp partition with security options
+      mount:
+        path: /var/tmp
+        src: /var/tmp
+        fstype: tmpfs
+        opts: "nodev,nosuid,noexec"
+        state: mounted
+      register: var_tmp_mount
+
+    - name: Configure /dev/shm partition with security options
+      mount:
+        path: /dev/shm
+        src: tmpfs
+        fstype: tmpfs
+        opts: "nodev,nosuid,noexec"
+        state: mounted
+      register: shm_mount
+
+    - name: Check if separate partitions exist
+      shell: |
+        for partition in /var /var/log /var/log/audit /home; do
+          if [ "$(df "$partition" | tail -1 | awk '{print $1}')" = "$(df / | tail -1 | awk '{print $1}')" ]; then
+            echo "$partition: same_as_root"
+          else
+            echo "$partition: separate"
+          fi
+        done
+      register: partition_check
+      changed_when: false
+
+    - name: Display partition status
+      debug:
+        msg: "{{ item }}"
+      loop: "{{ partition_check.stdout_lines }}"
+
+    - name: Verify mount options are applied
+      shell: mount | grep "{{ item.path }}" || echo "not_mounted"
+      register: mount_verification
+      loop: "{{ partition_configs }}"
+      changed_when: false
+
+    - name: Display current mount options
+      debug:
+        msg: "{{ item.item.path }}: {{ item.stdout if 'not_mounted' not in item.stdout else 'Not mounted' }}"
+      loop: "{{ mount_verification.results }}"
+
+    - name: Check /etc/fstab for proper entries
+      shell: grep -E "{{ item.path }}|tmpfs.*{{ item.path }}" /etc/fstab || echo "not_found"
+      register: fstab_check
+      loop: "{{ partition_configs }}"
+      changed_when: false
+
+    - name: Add missing fstab entries
+      lineinfile:
+        path: /etc/fstab
+        line: "{{ item.item.fstab_line }}"
+        insertafter: "^#"
+        create: yes
+        mode: '0644'
+        owner: root
+        group: root
+      when: "'not_found' in item.stdout"
+      loop: "{{ fstab_check.results }}"
+      register: fstab_updates
+
+  handlers:
+    - name: Remount partitions
+      mount:
+        path: "{{ item.path }}"
+        state: remounted
+      loop: "{{ partition_configs }}"
+      listen: "remount partitions"
+
+  post_tasks:
+    - name: Display summary of changes
+      debug:
+        msg: |
+          Partition security configuration completed:
+          - /tmp: {{ 'Configured' if tmp_mount.changed else 'Already configured' }}
+          - /var/tmp: {{ 'Configured' if var_tmp_mount.changed else 'Already configured' }}
+          - /dev/shm: {{ 'Configured' if shm_mount.changed else 'Already configured' }}
+          
+          Note: Separate partitions for /var, /var/log, /var/log/audit, and /home 
+          should be created during system installation for optimal security.
+
+    - name: Trigger remount if fstab was updated
+      meta: flush_handlers
+      when: fstab_updates.changed 

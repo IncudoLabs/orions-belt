@@ -1,0 +1,247 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Script ID: OB-009
+
+---
+- name: Disable Unnecessary Network Services
+  hosts: "{{ target_hosts }}"
+  become: yes
+  gather_facts: yes
+  
+  pre_tasks:
+    - name: Validate target_hosts is provided
+      fail:
+        msg: |
+          CRITICAL SECURITY ERROR: target_hosts variable is not set!
+          
+          This playbook requires explicit specification of target hosts to prevent
+          accidental execution on unintended systems.
+          
+          Usage: ansible-playbook disable_unnecessary_services.yml --extra-vars "target_hosts=your_hosts"
+          
+          Examples:
+          - target_hosts=webservers
+          - target_hosts=db_servers
+          - target_hosts=192.168.1.10
+          - target_hosts=server1,server2,server3
+      when: target_hosts is not defined or target_hosts == ""
+  
+  vars:
+    # Services that are typically safe to disable
+    services_to_disable:
+      - telnet
+      - rsh-server
+      - rlogin
+      - rexec
+      - tftp
+      - tftpd
+      - xinetd
+      - inetd
+      - chargen
+      - chargen-udp
+      - daytime
+      - daytime-udp
+      - echo
+      - echo-udp
+      - discard
+      - discard-udp
+      - time
+      - time-udp
+    
+    # Services to check before disabling (may be needed)
+    services_to_check:
+      - apache2
+      - nginx
+      - mysql
+      - postgresql
+      - redis-server
+      - mongod
+      - elasticsearch
+      - kibana
+      - prometheus
+      - grafana
+      - jenkins
+      - docker
+      - kubelet
+      - ssh
+      - sshd
+      - systemd-resolved
+      - systemd-timesyncd
+      - chronyd
+      - ntpd
+      - rsyslog
+      - syslog-ng
+      - fail2ban
+      - ufw
+      - iptables
+      - nftables
+
+  tasks:
+    - name: Create backup of current service states
+      shell: |
+        systemctl list-unit-files --type=service --state=enabled | grep -E "({{ services_to_disable | join('|') }})" > /tmp/enabled_services_backup.txt || echo "No enabled services to disable found" > /tmp/enabled_services_backup.txt
+        systemctl list-unit-files --type=service --state=running | grep -E "({{ services_to_check | join('|') }})" > /tmp/running_services_backup.txt || echo "No running critical services found" > /tmp/running_services_backup.txt
+      register: service_backup
+      changed_when: false
+
+    - name: Display current service states
+      debug:
+        msg: |
+          === CURRENT SERVICE STATES ===
+          Enabled services backup: /tmp/enabled_services_backup.txt
+          Running services backup: /tmp/running_services_backup.txt
+
+    - name: Check which services are currently running
+      service_facts:
+
+    - name: Display running services
+      debug:
+        msg: |
+          === RUNNING SERVICES ===
+          {% for service_name, service_info in ansible_facts.services.items() %}
+          {% if service_info.state == "running" %}
+          - {{ service_name }}: {{ service_info.state }}
+          {% endif %}
+          {% endfor %}
+
+    - name: Check for critical services that should not be disabled
+      shell: |
+        for service in {{ services_to_check | join(' ') }}; do
+          if systemctl is-active --quiet "$service"; then
+            echo "$service"
+          fi
+        done
+      register: critical_running_services
+      changed_when: false
+
+    - name: Display critical running services
+      debug:
+        msg: |
+          === CRITICAL RUNNING SERVICES ===
+          The following services are currently running and should NOT be disabled:
+          {% for service in critical_running_services.stdout_lines %}
+          - {{ service }}
+          {% endfor %}
+
+    - name: Check which services to disable are actually enabled
+      shell: |
+        for service in {{ services_to_disable | join(' ') }}; do
+          if systemctl is-enabled --quiet "$service" 2>/dev/null; then
+            echo "$service"
+          fi
+        done
+      register: enabled_services_to_disable
+      changed_when: false
+
+    - name: Display services that will be disabled
+      debug:
+        msg: |
+          === SERVICES TO DISABLE ===
+          The following services will be disabled:
+          {% for service in enabled_services_to_disable.stdout_lines %}
+          - {{ service }}
+          {% endfor %}
+
+    - name: Prompt for confirmation
+      pause:
+        prompt: |
+          === SERVICE DISABLE CONFIRMATION ===
+          
+          The following services will be disabled:
+          {% for service in enabled_services_to_disable.stdout_lines %}
+          - {{ service }}
+          {% endfor %}
+          
+          Critical services that will remain running:
+          {% for service in critical_running_services.stdout_lines %}
+          - {{ service }}
+          {% endfor %}
+          
+          Proceed with disabling unnecessary services? (y/n):
+
+    - name: Disable unnecessary services
+      systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: no
+      loop: "{{ enabled_services_to_disable.stdout_lines }}"
+      when: 
+        - enabled_services_to_disable.stdout_lines | length > 0
+        - ansible_user_input | lower == 'y'
+
+    - name: Verify services are disabled
+      shell: |
+        for service in {{ enabled_services_to_disable.stdout_lines | join(' ') }}; do
+          if systemctl is-enabled --quiet "$service" 2>/dev/null; then
+            echo "WARNING: $service is still enabled"
+          else
+            echo "OK: $service is now disabled"
+          fi
+        done
+      register: service_verification
+      changed_when: false
+      when: enabled_services_to_disable.stdout_lines | length > 0
+
+    - name: Display verification results
+      debug:
+        msg: |
+          === SERVICE DISABLE VERIFICATION ===
+          {% if service_verification is defined and service_verification.stdout_lines is defined %}
+          {% for line in service_verification.stdout_lines %}
+          {{ line }}
+          {% endfor %}
+          {% else %}
+          No services were disabled (all services were already secure or not present).
+          {% endif %}
+
+    - name: Check for any broken dependencies
+      shell: systemctl --failed
+      register: failed_services
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display failed services (if any)
+      debug:
+        msg: |
+          === FAILED SERVICES CHECK ===
+          {% if failed_services.stdout_lines | length > 0 %}
+          The following services failed to start:
+          {% for line in failed_services.stdout_lines %}
+          {{ line }}
+          {% endfor %}
+          {% else %}
+          No failed services detected.
+          {% endif %}
+
+    - name: Display completion summary
+      debug:
+        msg: |
+          === SERVICE DISABLE COMPLETION ===
+          Services disabled: {{ enabled_services_to_disable.stdout_lines | length }}
+          Critical services preserved: {{ critical_running_services.stdout_lines | length }}
+          Backup created: /tmp/enabled_services_backup.txt
+          Backup created: /tmp/running_services_backup.txt
+          
+          To restore services if needed:
+          - Check backup files for original states
+          - Use: systemctl enable <service> && systemctl start <service> 

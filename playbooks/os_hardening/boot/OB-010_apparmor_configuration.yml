@@ -1,0 +1,180 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Script ID: OB-010
+
+---
+- name: Configure AppArmor for Security Hardening
+  hosts: "{{ target_hosts }}"
+  become: yes
+  gather_facts: yes
+  
+  pre_tasks:
+    - name: Validate target_hosts is provided
+      fail:
+        msg: |
+          CRITICAL SECURITY ERROR: target_hosts variable is not set!
+          
+          This playbook requires explicit specification of target hosts to prevent
+          accidental execution on unintended systems.
+          
+          Usage: ansible-playbook apparmor_configuration.yml --extra-vars "target_hosts=your_hosts"
+          
+          Examples:
+          - target_hosts=webservers
+          - target_hosts=db_servers
+          - target_hosts=192.168.1.10
+          - target_hosts=server1,server2,server3
+      when: target_hosts is not defined or target_hosts == ""
+  
+  vars:
+    apparmor_config_dir: /etc/apparmor
+    apparmor_profiles_dir: /etc/apparmor.d
+
+  tasks:
+    - name: Install AppArmor packages
+      apt:
+        name: 
+          - apparmor
+          - apparmor-utils
+          - apparmor-profiles
+        state: present
+        update_cache: yes
+      register: apparmor_install
+
+    - name: Check if AppArmor is enabled in kernel
+      shell: cat /sys/kernel/security/apparmor/profiles | head -1 || echo "not_enabled"
+      register: apparmor_kernel_check
+      changed_when: false
+
+    - name: Enable AppArmor service
+      systemd:
+        name: apparmor
+        enabled: yes
+        state: started
+        daemon_reload: yes
+      register: apparmor_service
+
+    - name: Start AppArmor service
+      systemd:
+        name: apparmor
+        state: started
+      when: apparmor_service.changed
+
+    - name: Check current AppArmor status
+      shell: apparmor_status
+      register: apparmor_status
+      changed_when: false
+
+    - name: Get list of AppArmor profiles
+      shell: apparmor_status --profiled
+      register: apparmor_profiles
+      changed_when: false
+
+    - name: Get list of enforcing profiles
+      shell: apparmor_status --enforced
+      register: apparmor_enforced
+      changed_when: false
+
+    - name: Get list of complaining profiles
+      shell: apparmor_status --complaining
+      register: apparmor_complaining
+      changed_when: false
+
+    - name: Set all profiles to enforcing mode
+      shell: aa-enforce "{{ item }}"
+      loop: "{{ apparmor_profiles.stdout_lines }}"
+      when: apparmor_profiles.stdout_lines | length > 0
+      register: apparmor_enforce_results
+      failed_when: false
+
+    - name: Create AppArmor configuration directory
+      file:
+        path: "{{ apparmor_config_dir }}"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Configure AppArmor to start at boot
+      lineinfile:
+        path: /etc/default/apparmor
+        regexp: '^APPARMOR='
+        line: 'APPARMOR=1'
+        create: yes
+        mode: '0644'
+        owner: root
+        group: root
+      register: apparmor_boot_config
+
+    - name: Configure AppArmor to enforce by default
+      lineinfile:
+        path: /etc/default/apparmor
+        regexp: '^APPARMOR_ENFORCE='
+        line: 'APPARMOR_ENFORCE=1'
+        create: yes
+        mode: '0644'
+        owner: root
+        group: root
+      register: apparmor_enforce_config
+
+    - name: Restart AppArmor if configuration changed
+      systemd:
+        name: apparmor
+        state: restarted
+      when: apparmor_boot_config.changed or apparmor_enforce_config.changed
+      register: apparmor_restart
+
+    - name: Verify AppArmor is working
+      shell: apparmor_status
+      register: apparmor_final_status
+      changed_when: false
+
+    - name: Display AppArmor configuration status
+      debug:
+        msg: |
+          AppArmor Security Configuration:
+          - Service status: {{ 'Running' if apparmor_service.changed else 'Already running' }}
+          - Kernel support: {{ 'Enabled' if 'not_enabled' not in apparmor_kernel_check.stdout else 'Not enabled' }}
+          - Boot configuration: {{ 'Updated' if apparmor_boot_config.changed else 'Already configured' }}
+          - Enforce mode: {{ 'Enabled' if apparmor_enforce_config.changed else 'Already configured' }}
+          - Total profiles: {{ apparmor_profiles.stdout_lines | length if apparmor_profiles.stdout_lines else 0 }}
+          - Enforcing profiles: {{ apparmor_enforced.stdout_lines | length if apparmor_enforced.stdout_lines else 0 }}
+          - Complaining profiles: {{ apparmor_complaining.stdout_lines | length if apparmor_complaining.stdout_lines else 0 }}
+
+  handlers:
+    - name: Restart AppArmor
+      systemd:
+        name: apparmor
+        state: restarted
+      listen: "restart apparmor"
+
+  post_tasks:
+    - name: Check for AppArmor violations
+      shell: journalctl -u apparmor --since "1 hour ago" | grep -i "denied\|violation" || echo "No recent violations"
+      register: apparmor_violations
+      changed_when: false
+
+    - name: Display recent AppArmor violations
+      debug:
+        msg: "{{ apparmor_violations.stdout }}"
+      when: "'No recent violations' not in apparmor_violations.stdout" 

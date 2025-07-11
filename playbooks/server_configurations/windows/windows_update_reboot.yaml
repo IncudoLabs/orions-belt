@@ -1,0 +1,46 @@
+---
+- name: Install Windows Updates and Reboot Intelligently
+  hosts: "{{ target_hosts }}"
+  gather_facts: no
+
+  tasks:
+    - name: Check for pending Windows updates
+      ansible.windows.win_updates:
+        category_names: '*'
+        state: searched
+      register: update_check
+
+    - name: Display pending updates
+      debug:
+        msg: "Found {{ update_check.found_update_count }} updates to install: {{ update_check.updates.keys() | list }}"
+      when: update_check.found_update_count > 0
+
+    - name: Display message if no updates are found
+      debug:
+        msg: "No pending Windows updates found."
+      when: update_check.found_update_count == 0
+
+    - name: Install all pending Windows updates
+      ansible.windows.win_updates:
+        category_names: '*'
+        state: installed
+      register: update_install
+      when: update_check.found_update_count > 0
+
+    - name: Reboot server if required by updates
+      when: update_install.reboot_required | default(false)
+      block:
+        - name: Display reboot message
+          debug:
+            msg: "Updates have been installed which require a reboot. Rebooting server now... This may take a few minutes."
+
+        - name: Reboot the server and wait for it to come back online
+          ansible.windows.win_reboot:
+            reboot_timeout: 3600
+
+    - name: Display message if reboot was not required
+      debug:
+        msg: "Updates installed successfully. No reboot was required."
+      when:
+        - update_install.changed
+        - not (update_install.reboot_required | default(false)) 

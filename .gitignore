@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2024 Marko Sarunac
+#
+# Part of the Orion's Belt project.
+# Repository: https://github.com/IncudoLabs/orions-belt
+
+# Ansible Vault and sensitive files
+vault.yml
+*.vault
+.vault_pass
+.vault_pass.txt
+vault_password.txt
+
+# Environment-specific configurations (if they contain sensitive data)
+
+
+# Backup files
+*.backup
+*.bak
+*.tmp
+*.swp
+*.swo
+
+# Log files
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# Ansible artifacts
+*.retry
+.ansible/
+ansible.log
+
+# SSH keys and certificates
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup directories
+backups/
+backup/
+
+# Test files
+test_*
+*_test.yml
+*_test.yaml
+
+# Documentation builds
+docs/_build/
+site/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+
+# Node modules (if any)
+node_modules/
+npm-debug.log*
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db 

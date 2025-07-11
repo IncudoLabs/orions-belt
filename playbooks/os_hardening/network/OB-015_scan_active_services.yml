@@ -1,0 +1,172 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Script ID: OB-015
+
+---
+- name: Scan Active Services and Configure Firewall
+  hosts: "{{ target_hosts }}"
+  become: yes
+  gather_facts: yes
+  
+  pre_tasks:
+    - name: Validate target_hosts is provided
+      fail:
+        msg: |
+          CRITICAL SECURITY ERROR: target_hosts variable is not set!
+          
+          This playbook requires explicit specification of target hosts to prevent
+          accidental execution on unintended systems.
+          
+          Usage: ansible-playbook scan_active_services.yml --extra-vars "target_hosts=your_hosts"
+          
+          Examples:
+          - target_hosts=webservers
+          - target_hosts=db_servers
+          - target_hosts=192.168.1.10
+          - target_hosts=server1,server2,server3
+      when: target_hosts is not defined or target_hosts == ""
+  
+  vars:
+    # Default allowed services (always allowed)
+    always_allowed_services:
+      - ssh
+    # Default allowed ports (always allowed)
+    always_allowed_ports:
+      - 22  # SSH
+    
+  tasks:
+    - name: Create backup of current firewall configuration
+      copy:
+        src: /etc/nftables.conf
+        dest: /etc/nftables.conf.backup.{{ ansible_date_time.epoch }}
+        remote_src: yes
+        backup: yes
+      ignore_errors: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Install required packages for port scanning
+      apt:
+        name:
+          - netstat-nat
+          - net-tools
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Get list of listening ports using ss
+      shell: ss -tlnp | grep LISTEN | awk '{print $4}' | sed 's/.*://' | sort -u
+      register: listening_ports
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Get list of listening ports using netstat (fallback)
+      shell: netstat -tlnp | grep LISTEN | awk '{print $4}' | sed 's/.*://' | sort -u
+      register: netstat_ports
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Combine port lists
+      set_fact:
+        all_listening_ports: "{{ (listening_ports.stdout_lines | default([]) + netstat_ports.stdout_lines | default([])) | unique | sort }}"
+      when: (listening_ports is defined and listening_ports.rc == 0) or (netstat_ports is defined and netstat_ports.rc == 0)
+
+    - name: Get service names for ports
+      shell: |
+        for port in {{ all_listening_ports | join(' ') }}; do
+          service=$(grep -w "$port" /etc/services | head -1 | awk '{print $1}' || echo "unknown-$port")
+          echo "$port:$service"
+        done
+      register: port_service_mapping
+      changed_when: false
+      when: all_listening_ports is defined and all_listening_ports | length > 0
+
+    - name: Set empty port mapping when no ports found
+      set_fact:
+        port_service_mapping:
+          stdout_lines: []
+      when: all_listening_ports is not defined or all_listening_ports | length == 0
+
+    - name: Display active services and ports
+      debug:
+        msg: |
+          === ACTIVE SERVICES DETECTED ===
+          {% for line in port_service_mapping.stdout_lines %}
+          {{ line }}
+          {% endfor %}
+          
+          === RECOMMENDED ACTIONS ===
+          1. SSH (port 22) will always be allowed from local subnet
+          2. Review the services above and decide which ones to allow
+          3. Consider blocking unnecessary services for security
+
+    - name: Prompt user for service configuration
+      pause:
+        prompt: |
+          === FIREWALL CONFIGURATION OPTIONS ===
+          
+          Choose your approach:
+          1. Interactive - Select which services to allow
+          2. Standard - Use predefined secure service list
+          3. Minimal - Only allow SSH and essential services
+          4. Skip firewall configuration
+          
+          Enter choice (1-4):
+      register: user_input
+
+    - name: Set firewall configuration method
+      set_fact:
+        firewall_method: "{{ user_input.user_input }}"
+
+    - name: Handle interactive firewall configuration
+      include_tasks: interactive_firewall_tasks.yml
+      when: firewall_method == "1"
+
+    - name: Handle standard firewall configuration
+      include_tasks: standard_firewall_tasks.yml
+      when: firewall_method == "2"
+
+    - name: Handle minimal firewall configuration
+      include_tasks: minimal_firewall_tasks.yml
+      when: firewall_method == "3"
+
+    - name: Skip firewall configuration
+      debug:
+        msg: "Firewall configuration skipped as requested"
+      when: firewall_method == "4"
+
+    - name: Display configuration summary
+      debug:
+        msg: |
+          === CONFIGURATION SUMMARY ===
+          Method chosen: {{ firewall_method }}
+          {% if firewall_method == "1" %}
+          Interactive configuration completed
+          {% elif firewall_method == "2" %}
+          Standard firewall rules applied
+          {% elif firewall_method == "3" %}
+          Minimal firewall rules applied
+          {% else %}
+          No firewall changes made
+          {% endif %}
+          
+          Backup created at: /etc/nftables.conf.backup.{{ ansible_date_time.epoch }} 

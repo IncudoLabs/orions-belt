@@ -1,0 +1,162 @@
+#!/bin/bash
+{# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Template ID: OB-002-T
+
+# AIDE check script for filesystem integrity monitoring
+# This template is used by OB-002 (filesystem_integrity.yml) #}
+
+# AIDE integrity check script
+# This script performs filesystem integrity checks using AIDE
+
+# Configuration
+AIDE_DB="{{ aide_database }}"
+AIDE_CONF="{{ aide_config_file }}"
+LOG_FILE="{{ aide_log_dir }}/aidecheck.log"
+REPORT_FILE="{{ aide_log_dir }}/aidecheck.report"
+
+# Log function with reduced verbosity
+log() {
+    local level="${2:-info}"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    # Only log essential information to reduce noise
+    if [ "$level" = "error" ] || [ "$level" = "warning" ] || [ "$level" = "info" ]; then
+        if [ -w "{{ aide_log_dir }}" ]; then
+            echo "$timestamp - [$level] $1" >> "$LOG_FILE" 2>/dev/null || echo "$timestamp - [$level] $1" >&2
+        else
+            echo "$timestamp - [$level] $1" >&2
+        fi
+    fi
+}
+
+# Start check with minimal logging
+log "Starting AIDE integrity check" "info"
+log "User: $(whoami), Config: $AIDE_CONF, DB: $AIDE_DB" "info"
+
+# Check prerequisites silently
+if [ ! -f "$AIDE_CONF" ]; then
+    log "ERROR: AIDE configuration file not found at $AIDE_CONF" "error"
+    exit 1
+fi
+
+if [ ! -r "$AIDE_CONF" ]; then
+    log "ERROR: AIDE configuration file not readable" "error"
+    exit 1
+fi
+
+if [ ! -f "$AIDE_DB" ]; then
+    log "ERROR: AIDE database not found at $AIDE_DB" "error"
+    log "Attempting to create database..." "info"
+    
+    # Try to create database with reduced output
+    aide --init --config="$AIDE_CONF" >/dev/null 2>&1
+    
+    if [ $? -eq 0 ] && [ -f "$AIDE_DB" ]; then
+        log "AIDE database created successfully" "info"
+    else
+        log "ERROR: Failed to create AIDE database" "error"
+        exit 1
+    fi
+fi
+
+if [ ! -r "$AIDE_DB" ]; then
+    log "ERROR: AIDE database not readable" "error"
+    exit 1
+fi
+
+if ! command -v aide >/dev/null 2>&1; then
+    log "ERROR: AIDE command not found in PATH" "error"
+    exit 1
+fi
+
+# Run AIDE check with reduced output
+log "Running AIDE integrity check..." "info"
+aide --check --config="$AIDE_CONF" > "$REPORT_FILE" 2>&1
+
+EXIT_CODE=$?
+log "AIDE check completed with exit code: $EXIT_CODE" "info"
+
+# AIDE exit codes:
+# 0 = no changes detected
+# 7 = changes detected (this is normal, not an error)
+# Other codes = actual errors
+
+if [ $EXIT_CODE -eq 0 ]; then
+    log "SUCCESS: No changes detected - system integrity verified" "info"
+    echo "AIDE integrity check passed - no changes detected" >> "$LOG_FILE" 2>/dev/null || true
+    SCRIPT_EXIT_CODE=0
+elif [ $EXIT_CODE -eq 7 ]; then
+    log "WARNING: Changes detected - reviewing report..." "warning"
+    
+    # Only log summary of changes, not the full verbose report
+    if [ -f "$REPORT_FILE" ]; then
+        # Extract only the summary information, not all the permission denied warnings
+        log "AIDE changes summary:" "info"
+        
+        # Count total changes
+        change_count=$(grep -c "changed:" "$REPORT_FILE" 2>/dev/null || echo "0")
+        log "Total files with changes: $change_count" "info"
+        
+        # Show only the first few changed files (not all the permission denied warnings)
+        log "Sample of changed files:" "info"
+        grep "changed:" "$REPORT_FILE" | head -5 | while read line; do
+            log "  $line" "info"
+        done
+        
+        # If there are more changes, just mention it
+        if [ "$change_count" -gt 5 ]; then
+            log "  ... and $((change_count - 5)) more changes (see $REPORT_FILE for details)" "info"
+        fi
+        
+        # Log the full report to a separate debug file only if needed
+        if [ "${AIDE_DEBUG:-false}" = "true" ]; then
+            cp "$REPORT_FILE" "$LOG_FILE.debug" 2>/dev/null || true
+            log "Full report saved to $LOG_FILE.debug" "info"
+        fi
+    fi
+    
+    # Send alert (you can customize this)
+    if command -v mail >/dev/null 2>&1; then
+        echo "AIDE integrity check detected $change_count changes on $(hostname)" | mail -s "AIDE Alert - $(hostname)" root
+    fi
+    
+    # Return 0 for systemd - changes detected is normal, not an error
+    SCRIPT_EXIT_CODE=0
+else
+    log "ERROR: AIDE check failed with unexpected exit code: $EXIT_CODE" "error"
+    
+    # Log the error report content for debugging
+    if [ -f "$REPORT_FILE" ]; then
+        log "AIDE error details:" "error"
+        # Only show the error part, not all the verbose output
+        grep -E "(ERROR|FATAL|failed)" "$REPORT_FILE" | head -10 | while read line; do
+            log "  $line" "error"
+        done
+    fi
+    
+    SCRIPT_EXIT_CODE=1
+fi
+
+log "AIDE check completed successfully" "info"
+exit $SCRIPT_EXIT_CODE 

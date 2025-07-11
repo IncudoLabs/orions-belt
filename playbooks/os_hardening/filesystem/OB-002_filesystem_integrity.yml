@@ -1,0 +1,371 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Script ID: OB-002
+
+---
+- name: Configure Filesystem Integrity Monitoring with AIDE
+  hosts: "{{ target_hosts }}"
+  become: yes
+  gather_facts: yes
+  
+  pre_tasks:
+    - name: Validate target_hosts is provided
+      fail:
+        msg: |
+          CRITICAL SECURITY ERROR: target_hosts variable is not set!
+          
+          This playbook requires explicit specification of target hosts to prevent
+          accidental execution on unintended systems.
+          
+          Usage: ansible-playbook filesystem_integrity.yml --extra-vars "target_hosts=your_hosts"
+          
+          Examples:
+          - target_hosts=webservers
+          - target_hosts=db_servers
+          - target_hosts=192.168.1.10
+          - target_hosts=server1,server2,server3
+      when: target_hosts is not defined or target_hosts == ""
+  
+  vars:
+    aide_config_file: /etc/aide/aide.conf
+    aide_database: /var/lib/aide/aide.db
+    aide_log_dir: /var/log/aide
+
+  tasks:
+    - name: Pre-configure AIDE package to prevent interactive prompts
+      debconf:
+        name: aide
+        question: "aide/init"
+        value: "true"
+        vtype: "boolean"
+      become: yes
+
+    - name: Pre-configure AIDE database location
+      debconf:
+        name: aide
+        question: "aide/database"
+        value: "{{ aide_database }}"
+        vtype: "string"
+      become: yes
+
+    - name: Pre-configure AIDE to not run automatically
+      debconf:
+        name: aide
+        question: "aide/automatic"
+        value: "false"
+        vtype: "boolean"
+      become: yes
+
+    - name: Install AIDE package
+      apt:
+        name: aide
+        state: present
+        update_cache: yes
+        dpkg_options: "force-confdef,force-confold"
+      register: aide_install
+
+    - name: Wait for _aide user to be created
+      wait_for:
+        path: /etc/passwd
+        search_regex: "_aide:"
+        timeout: 30
+      register: aide_user_wait
+
+    - name: Check if _aide user exists
+      shell: "id _aide 2>/dev/null && echo 'exists' || echo 'not_exists'"
+      register: aide_user_check
+      changed_when: false
+
+    - name: Debug AIDE user check
+      debug:
+        msg: "AIDE user check result: {{ aide_user_check.stdout }}"
+
+    - name: Create AIDE directories with proper permissions
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+      loop:
+        - "{{ aide_log_dir }}"
+        - /var/lib/aide
+        - /etc/aide
+
+    - name: Create AIDE log files
+      file:
+        path: "{{ item }}"
+        state: touch
+        mode: '0644'
+        owner: root
+        group: root
+      loop:
+        - "{{ aide_log_dir }}/aideinit.log"
+        - "{{ aide_log_dir }}/aideinit.errors"
+        - "{{ aide_log_dir }}/aidecheck.log"
+        - "{{ aide_log_dir }}/aidecheck.report"
+        - "{{ aide_log_dir }}/aide.report"
+
+    - name: Configure AIDE with minimal working configuration
+      template:
+        src: aide.conf.j2
+        dest: "{{ aide_config_file }}"
+        mode: '0644'
+        owner: root
+        group: root
+        backup: yes
+      register: aide_config_update
+
+    - name: Ensure configuration file ends with newline
+      lineinfile:
+        path: "{{ aide_config_file }}"
+        line: ""
+        insertafter: EOF
+      when: aide_config_update.changed
+
+    - name: Force add newline to configuration file
+      lineinfile:
+        path: "{{ aide_config_file }}"
+        line: ""
+        insertafter: EOF
+      register: newline_fix
+
+    - name: Test AIDE configuration syntax
+      command: aide --config-check --config={{ aide_config_file }}
+      register: aide_config_test
+      changed_when: false
+      failed_when: false
+
+    - name: Display configuration test result
+      debug:
+        msg: "AIDE configuration test: {{ 'PASSED' if aide_config_test.rc == 0 else 'FAILED' }}"
+
+    - name: Set proper permissions for _aide user
+      file:
+        path: "{{ item }}"
+        mode: '0755'
+        owner: _aide
+        group: _aide
+      loop:
+        - "{{ aide_log_dir }}"
+        - /var/lib/aide
+        - /etc/aide
+      when: "'exists' in aide_user_check.stdout"
+
+    - name: Set proper permissions for log files
+      file:
+        path: "{{ item }}"
+        mode: '0644'
+        owner: _aide
+        group: _aide
+      loop:
+        - "{{ aide_log_dir }}/aideinit.log"
+        - "{{ aide_log_dir }}/aideinit.errors"
+        - "{{ aide_log_dir }}/aidecheck.log"
+        - "{{ aide_log_dir }}/aidecheck.report"
+        - "{{ aide_log_dir }}/aide.report"
+      when: "'exists' in aide_user_check.stdout"
+
+    - name: Remove any existing database files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ aide_database }}"
+        - "{{ aide_database }}.new"
+        - "{{ aide_database }}.gz"
+        - "{{ aide_database }}.new.gz"
+
+    - name: Create AIDE database with minimal configuration
+      command: aide --init --config={{ aide_config_file }}
+      args:
+        creates: "{{ aide_database }}.new"
+      register: aide_init
+      failed_when: false
+      become_user: _aide
+      when: "'exists' in aide_user_check.stdout"
+
+    - name: Create AIDE database as root if _aide user not found
+      command: aide --init --config={{ aide_config_file }}
+      args:
+        creates: "{{ aide_database }}.new"
+      register: aide_init_root
+      failed_when: false
+      when: "'not_exists' in aide_user_check.stdout"
+
+    - name: Check AIDE initialization result (_aide user)
+      debug:
+        msg: "AIDE initialization as _aide user: {{ 'succeeded' if aide_init.rc == 0 else 'failed with rc: ' + aide_init.rc|string }}"
+      when: "'exists' in aide_user_check.stdout and aide_init is defined"
+
+    - name: Check AIDE initialization result (root user)
+      debug:
+        msg: "AIDE initialization as root user: {{ 'succeeded' if aide_init_root.rc == 0 else 'failed with rc: ' + aide_init_root.rc|string }}"
+      when: "'not_exists' in aide_user_check.stdout and aide_init_root is defined"
+
+    - name: Try alternative database creation if first attempt failed
+      command: aideinit --yes
+      args:
+        creates: "{{ aide_database }}.new"
+      register: aide_init_alt
+      when: 
+        - "'exists' in aide_user_check.stdout and aide_init is defined and aide_init.rc != 0 and not aide_init.changed"
+        - or
+        - "'not_exists' in aide_user_check.stdout and aide_init_root is defined and aide_init_root.rc != 0 and not aide_init_root.changed"
+      failed_when: false
+
+    - name: Check alternative initialization result
+      debug:
+        msg: "Alternative AIDE initialization {{ 'succeeded' if aide_init_alt.rc == 0 else 'failed with rc: ' + aide_init_alt.rc|string }}"
+      when: aide_init_alt is defined and aide_init_alt.changed
+
+    - name: Move new database to current if it exists
+      command: mv {{ aide_database }}.new {{ aide_database }}
+      when: (aide_init is defined and aide_init.rc == 0) or (aide_init_root is defined and aide_init_root.rc == 0) or (aide_init_alt is defined and aide_init_alt.rc == 0)
+
+    - name: Check if AIDE database exists
+      stat:
+        path: "{{ aide_database }}"
+      register: aide_db_stat
+
+    - name: Display AIDE database status
+      debug:
+        msg: "AIDE database {{ 'exists' if aide_db_stat.stat.exists else 'does not exist' }}"
+
+    - name: Set AIDE user variables
+      set_fact:
+        aide_user: "_aide"
+        aide_group: "_aide"
+      when: "'exists' in aide_user_check.stdout"
+
+    - name: Set fallback AIDE user variables
+      set_fact:
+        aide_user: "root"
+        aide_group: "root"
+      when: "'not_exists' in aide_user_check.stdout"
+
+    - name: Create systemd service file for AIDE check
+      template:
+        src: aidecheck.service.j2
+        dest: /etc/systemd/system/aidecheck.service
+        mode: '0644'
+        owner: root
+        group: root
+      register: aide_service_created
+
+    - name: Create AIDE check script
+      template:
+        src: aidecheck.sh.j2
+        dest: /usr/local/bin/aidecheck
+        mode: '0755'
+        owner: root
+        group: root
+      register: aide_script_created
+
+    - name: Enable AIDE check service
+      systemd:
+        name: aidecheck
+        enabled: yes
+        daemon_reload: yes
+        state: "{{ 'started' if aide_db_stat.stat.exists else 'stopped' }}"
+      when: aide_service_created.changed or aide_script_created.changed
+
+    - name: Create cron job for daily AIDE checks
+      cron:
+        name: "Daily AIDE integrity check"
+        hour: "2"
+        minute: "0"
+        job: "/usr/local/bin/aidecheck"
+        user: "{{ aide_user }}"
+        state: present
+      when: aide_user == '_aide'
+
+    - name: Test AIDE check if database exists
+      command: aide --check --config={{ aide_config_file }}
+      register: aide_test
+      changed_when: false
+      failed_when: false
+      when: aide_db_stat.stat.exists
+      become_user: "{{ aide_user if aide_user == '_aide' else 'root' }}"
+
+    - name: Display AIDE test result
+      debug:
+        msg: "AIDE test {{ 'succeeded' if aide_test.rc == 0 else 'completed with warnings (rc: ' + aide_test.rc|string + ')' }}"
+      when: aide_test is defined and aide_test.rc is defined
+
+    - name: Test AIDE check script manually
+      command: /usr/local/bin/aidecheck
+      register: aide_script_test
+      changed_when: false
+      failed_when: false
+      become_user: _aide
+
+    - name: Display AIDE script test output
+      debug:
+        msg: |
+          AIDE script test result:
+          Exit code: {{ aide_script_test.rc }}
+          Stdout: {{ aide_script_test.stdout }}
+          Stderr: {{ aide_script_test.stderr }}
+
+    - name: Check AIDE log file content
+      command: cat {{ aide_log_dir }}/aidecheck.log
+      register: aide_log_content
+      changed_when: false
+      failed_when: false
+      become_user: _aide
+
+    - name: Display AIDE log content
+      debug:
+        msg: "AIDE log content: {{ aide_log_content.stdout_lines }}"
+      when: aide_log_content.stdout_lines | length > 0
+
+    - name: Display final AIDE status
+      debug:
+        msg: |
+          AIDE Filesystem Integrity Monitoring configured:
+          - Database: {{ aide_database }} ({{ 'exists' if aide_db_stat.stat.exists else 'missing' }})
+          - Configuration: {{ aide_config_file }}
+          - Service: aidecheck (enabled)
+          - Daily cron job: 2:00 AM (as {{ aide_user }})
+          - Status: {{ 'READY' if aide_db_stat.stat.exists else 'NEEDS DATABASE CREATION' }}
+
+  handlers:
+    - name: Restart AIDE service
+      systemd:
+        name: aidecheck
+        state: restarted
+      listen: "restart aide"
+
+  post_tasks:
+    - name: Provide manual database creation instructions if needed
+      debug:
+        msg: |
+          AIDE installation completed but database creation failed.
+          
+          To complete the setup manually:
+          sudo aide --init --config=/etc/aide/aide.conf
+          
+          Then restart the service:
+          sudo systemctl restart aidecheck
+      when: not aide_db_stat.stat.exists 

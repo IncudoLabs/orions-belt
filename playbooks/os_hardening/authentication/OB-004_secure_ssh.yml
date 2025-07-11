@@ -1,0 +1,197 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Script ID: OB-004
+
+---
+- name: Secure SSH Configuration
+  hosts: "{{ target_hosts }}"
+  become: yes
+  gather_facts: yes
+  
+  pre_tasks:
+    - name: Validate target_hosts is provided
+      fail:
+        msg: |
+          CRITICAL SECURITY ERROR: target_hosts variable is not set!
+          
+          This playbook requires explicit specification of target hosts to prevent
+          accidental execution on unintended systems.
+          
+          Usage: ansible-playbook secure_ssh.yml --extra-vars "target_hosts=your_hosts"
+          
+          Examples:
+          - target_hosts=webservers
+          - target_hosts=db_servers
+          - target_hosts=192.168.1.10
+          - target_hosts=server1,server2,server3
+      when: target_hosts is not defined or target_hosts == ""
+  
+  vars:
+    # SSH security settings - use config values with defaults
+    ssh_port: "{{ network.ssh.port | default(22) }}"
+    ssh_protocol: "{{ network.ssh.protocol | default(2) }}"
+    ssh_root_login: "{{ network.ssh.allow_root_login | default('no') | string }}"
+    ssh_root_login_with_cert: "{{ network.ssh.allow_root_login_with_cert | default('yes') | string }}"
+    ssh_password_auth: "{{ network.ssh.password_authentication | default('no') | string }}"
+    ssh_pubkey_auth: "{{ network.ssh.key_authentication | default('yes') | string }}"
+    ssh_empty_passwords: "{{ network.ssh.empty_passwords | default('no') | string }}"
+    ssh_ignore_rhosts: "{{ network.ssh.ignore_rhosts | default('yes') | string }}"
+    ssh_hostbased_auth: "{{ network.ssh.hostbased_authentication | default('no') | string }}"
+    ssh_permit_empty_passwords: "{{ network.ssh.permit_empty_passwords | default('no') | string }}"
+    ssh_x11_forwarding: "{{ network.ssh.x11_forwarding | default('no') | string }}"
+    ssh_max_auth_tries: "{{ network.ssh.max_auth_tries | default(3) }}"
+    ssh_client_alive_interval: "{{ network.ssh.client_alive_interval | default(300) }}"
+    ssh_client_alive_count_max: "{{ network.ssh.client_alive_count_max | default(2) }}"
+    ssh_login_grace_time: "{{ network.ssh.login_grace_time | default(60) }}"
+    ssh_allow_users: "{{ network.ssh.allow_users | default([]) }}"
+    ssh_deny_users: "{{ network.ssh.deny_users | default([]) }}"
+    ssh_allow_groups: "{{ network.ssh.allow_groups | default([]) }}"
+    ssh_deny_groups: "{{ network.ssh.deny_groups | default([]) }}"
+    
+  tasks:
+    - name: Create backup of current SSH configuration
+      copy:
+        src: /etc/ssh/sshd_config
+        dest: /etc/ssh/sshd_config.backup.{{ ansible_date_time.epoch }}
+        remote_src: yes
+        backup: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Install SSH server if not present
+      apt:
+        name: openssh-server
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Create secure SSH configuration
+      template:
+        src: sshd_config.j2
+        dest: /etc/ssh/sshd_config
+        mode: '0600'
+        backup: yes
+      notify: restart ssh
+
+    - name: Create SSH client configuration
+      template:
+        src: ssh_config.j2
+        dest: /etc/ssh/ssh_config
+        mode: '0644'
+        backup: yes
+
+    - name: Set secure permissions on SSH directory
+      file:
+        path: /etc/ssh
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+
+    - name: Set secure permissions on SSH private keys
+      file:
+        path: "{{ item }}"
+        mode: '0600'
+        owner: root
+        group: root
+      loop:
+        - /etc/ssh/ssh_host_rsa_key
+        - /etc/ssh/ssh_host_ecdsa_key
+        - /etc/ssh/ssh_host_ed25519_key
+      ignore_errors: yes
+
+    - name: Set secure permissions on SSH public keys
+      file:
+        path: "{{ item }}"
+        mode: '0644'
+        owner: root
+        group: root
+      loop:
+        - /etc/ssh/ssh_host_rsa_key.pub
+        - /etc/ssh/ssh_host_ecdsa_key.pub
+        - /etc/ssh/ssh_host_ed25519_key.pub
+      ignore_errors: yes
+
+    - name: Test SSH configuration
+      shell: sshd -t
+      register: ssh_config_test
+      changed_when: false
+
+    - name: Display SSH configuration test results
+      debug:
+        msg: "SSH configuration test: {{ 'PASSED' if ssh_config_test.rc == 0 else 'FAILED' }}"
+      when: ssh_config_test is defined
+
+    - name: Restart SSH service if configuration is valid
+      systemd:
+        name: ssh
+        state: restarted
+        enabled: yes
+      when: ssh_config_test.rc == 0
+
+    - name: Verify SSH service is running
+      systemd:
+        name: ssh
+        state: started
+        enabled: yes
+
+    - name: Display SSH security summary
+      debug:
+        msg: |
+          === SSH SECURITY CONFIGURATION SUMMARY ===
+          
+          SSH Protocol: {{ ssh_protocol }}
+          SSH Port: {{ ssh_port }}
+          Root Login: {{ ssh_root_login }}
+          Root Login with Certificate: {{ ssh_root_login_with_cert }}
+          Password Authentication: {{ ssh_password_auth }}
+          Public Key Authentication: {{ ssh_pubkey_auth }}
+          Empty Passwords: {{ ssh_empty_passwords }}
+          X11 Forwarding: {{ ssh_x11_forwarding }}
+          Max Auth Tries: {{ ssh_max_auth_tries }}
+          Client Alive Interval: {{ ssh_client_alive_interval }} seconds
+          Login Grace Time: {{ ssh_login_grace_time }} seconds
+          
+          === SECURITY FEATURES ENABLED ===
+          ✓ SSH Protocol 2 only
+          ✓ Root login disabled (password)
+          ✓ Root login enabled (certificate only)
+          ✓ Password authentication disabled
+          ✓ Public key authentication enabled
+          ✓ Empty passwords disabled
+          ✓ X11 forwarding disabled
+          ✓ Limited authentication attempts
+          ✓ Connection timeout settings
+          ✓ Secure file permissions
+          
+          === NEXT STEPS ===
+          1. Ensure you have SSH keys configured for authentication
+          2. Test SSH connection from authorized clients
+          3. Consider implementing fail2ban for additional protection
+          4. Monitor SSH logs for unauthorized access attempts
+
+  handlers:
+    - name: restart ssh
+      systemd:
+        name: ssh
+        state: restarted
+      when: ansible_os_family == "Debian" 
