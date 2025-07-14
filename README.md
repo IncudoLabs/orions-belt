@@ -31,18 +31,30 @@ Our development is continuously guided by these core research principles.
 
 ## Getting Started
 
-You can easily run any playbook using the interactive script included in the repository.
+This project uses a flexible, environment-based configuration system. To get started, you will need to create configuration and inventory files for your target environment (e.g., `development`, `staging`, `production`).
+
+The runner script (`run_playbooks.sh`) will automatically load the correct files based on the selected environment.
+
+For detailed instructions, setup guidance, and a full walkthrough with examples, please see our comprehensive **[Configuration System Usage Guide](example_usage.md)**.
+
+A basic first-time setup for a `development` environment would look like this:
 
 ```bash
-./run_playbooks.sh
-```
+# 1. Create the necessary directories
+mkdir -p config inventory
 
-This will launch a menu where you can browse and select playbooks by category to run against your target hosts (defined in `hosts`). For first-time use, copy the example configuration:
+# 2. Create a development configuration file
+cp config/config-example.yml config/config-development.yml
 
-```bash
-cp hosts.example hosts
-cp config-example.yml config.yml
-# Edit 'hosts' and 'config.yml' to match your environment
+# 3. Create a development inventory file
+cp inventory/hosts-example inventory/hosts-development
+
+# 4. Edit the new files to match your environment
+# nano config/config-development.yml
+# nano inventory/hosts-development
+
+# 5. Run the script for the development environment
+./run_playbooks.sh development
 ```
 
 ## How to Contribute

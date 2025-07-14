@@ -1,0 +1,133 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Playbook ID: OB-CFG-008
+---
+- name: Install and Configure Wazuh Agent on Windows
+  hosts: "{{ target_hosts }}"
+  gather_facts: no
+
+  vars_prompt:
+    - name: wazuh_registration_password
+      prompt: "Enter the Wazuh registration password"
+      private: yes
+
+  pre_tasks:
+    - name: DEBUG - Show inventory directory path
+      ansible.builtin.debug:
+        var: inventory_dir
+      run_once: true
+
+    - name: DEBUG - Show full path to base config file
+      ansible.builtin.debug:
+        msg: "Base config path: {{ inventory_dir }}/../config/config.yml"
+      run_once: true
+
+    - name: Load base configuration
+      ansible.builtin.set_fact:
+        config: "{{ lookup('file', inventory_dir ~ '/../config/config.yml') | from_yaml }}"
+
+    - name: DEBUG - Show full path to environment-specific config file
+      ansible.builtin.debug:
+        msg: "Env-specific config path: {{ inventory_dir }}/../config/config-{{ target_env | default('development') }}.yml"
+      run_once: true
+
+    - name: Load environment-specific configuration
+      ansible.builtin.set_fact:
+        env_config: "{{ lookup('file', inventory_dir ~ '/../config/config-' ~ (target_env | default('development')) ~ '.yml') | from_yaml }}"
+
+    - name: Merge configurations
+      ansible.builtin.set_fact:
+        wazuh: "{{ config.wazuh | combine(env_config.wazuh | default({}), recursive=True) }}"
+
+    - name: Fail if Wazuh manager host is not defined
+      fail:
+        msg: "The 'wazuh.agent.manager_host' variable is not defined in your config or vault files. This is required to register the agent."
+      when: wazuh.agent.manager_host is not defined or wazuh.agent.manager_host == ""
+
+  tasks:
+    - name: Check if Wazuh agent is already installed
+      ansible.windows.win_shell: |
+        Get-ItemProperty HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\* |
+        Where-Object { $_.DisplayName -like 'Wazuh Agent' } |
+        Select-Object -ExpandProperty DisplayVersion
+      register: wazuh_installed_version
+      changed_when: false
+      failed_when: false
+
+    - name: Display message if agent is already installed
+      ansible.builtin.debug:
+        msg: "Wazuh agent version {{ wazuh_installed_version.stdout | trim }} is already installed. The service will be restarted to ensure configuration is up to date."
+      when: wazuh_installed_version.stdout | length > 0
+
+    - name: Proceed with installation if agent is not found
+      when: wazuh_installed_version.stdout | length == 0
+      block:
+        - name: Construct MSI download URL
+          ansible.builtin.set_fact:
+            wazuh_msi_url: "https://packages.wazuh.com/4.x/windows/wazuh-agent-{{ wazuh.agent.version }}.msi"
+
+        - name: Download the Wazuh agent MSI installer
+          ansible.windows.win_get_url:
+            url: "{{ wazuh_msi_url }}"
+            dest: "C:\\Windows\\Temp\\wazuh-agent.msi"
+          register: download_result
+
+        - name: DEBUG - Show Wazuh manager host before installation
+          ansible.builtin.debug:
+            msg: "Wazuh manager host being used for installation: {{ wazuh.agent.manager_host }}"
+
+        - name: Install the Wazuh agent
+          ansible.windows.win_package:
+            path: "C:\\Windows\\Temp\\wazuh-agent.msi"
+            state: present
+            arguments:
+              - /q
+              - "WAZUH_MANAGER={{ wazuh.agent.manager_host }}"
+              - "WAZUH_REGISTRATION_SERVER={{ wazuh.agent.manager_host }}"
+              - "WAZUH_AGENT_GROUP={{ wazuh.agent.default_group }}"
+              - "WAZUH_AGENT_NAME={{ inventory_hostname }}"
+              - "WAZUH_REGISTRATION_PASSWORD={{ wazuh_registration_password }}"
+          register: install_result
+          when: download_result is succeeded
+
+        - name: Set flag indicating a new installation occurred
+          ansible.builtin.set_fact:
+            wazuh_was_newly_installed: true
+          when: install_result.changed
+
+        - name: Clean up the installer
+          ansible.windows.win_file:
+            path: "C:\\Windows\\Temp\\wazuh-agent.msi"
+            state: absent
+
+        - name: Display completion message for new install
+          ansible.builtin.debug:
+            msg: "Wazuh agent {{ wazuh.agent.version }} was successfully installed. The service will now be started/restarted."
+          when: install_result.changed
+
+    - name: Always restart the Wazuh service to apply configuration
+      ansible.windows.win_service:
+        name: Wazuh
+        state: restarted
+        start_mode: auto
+      when: wazuh_installed_version.stdout | length > 0 or wazuh_was_newly_installed | default(false) 
