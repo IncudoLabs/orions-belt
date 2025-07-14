@@ -69,11 +69,11 @@ show_menu() {
     fi
     
     # Show configuration files being used
-    echo -e "  Configuration: ${CYAN}config.yml${NC}"
-    if [[ -f "config-$ENVIRONMENT.yml" ]]; then
-        echo -e "    ${GREEN}✓ with overrides from config-$ENVIRONMENT.yml${NC}"
+    echo -e "  Configuration: ${CYAN}config/config.yml${NC}"
+    if [[ -f "config/config-$ENVIRONMENT.yml" ]]; then
+        echo -e "    ${GREEN}✓ with overrides from config/config-$ENVIRONMENT.yml${NC}"
     else
-        echo -e "    ${YELLOW}⚠ no environment-specific overrides (config-$ENVIRONMENT.yml not found)${NC}"
+        echo -e "    ${YELLOW}⚠ no environment-specific overrides (config/config-$ENVIRONMENT.yml not found)${NC}"
     fi
     
     # Show hosts file being used
@@ -110,11 +110,11 @@ configure_environment() {
     
     # Show configuration files being used
     echo -e "${YELLOW}Configuration Files:${NC}"
-    echo -e "  Base config: ${CYAN}config.yml${NC}"
-    if [[ -f "config-$ENVIRONMENT.yml" ]]; then
-        echo -e "    ${GREEN}✓ Environment overrides: config-$ENVIRONMENT.yml${NC}"
+    echo -e "  Base config: ${CYAN}config/config.yml${NC}"
+    if [[ -f "config/config-$ENVIRONMENT.yml" ]]; then
+        echo -e "    ${GREEN}✓ Environment overrides: config/config-$ENVIRONMENT.yml${NC}"
     else
-        echo -e "    ${YELLOW}⚠ No environment overrides (config-$ENVIRONMENT.yml not found)${NC}"
+        echo -e "    ${YELLOW}⚠ No environment overrides (config/config-$ENVIRONMENT.yml not found)${NC}"
     fi
     
     # Show hosts file being used
@@ -150,6 +150,7 @@ configure_environment() {
                 3) ENVIRONMENT="production" ;;
                 *) echo -e "${RED}Invalid choice. Keeping current environment.${NC}" ;;
             esac
+            export ANSIBLE_ENVIRONMENT="$ENVIRONMENT"
             echo -e "${GREEN}Environment set to: $ENVIRONMENT${NC}"
             ;;
         2)
@@ -259,16 +260,16 @@ test_configuration() {
     
     # Check if config files exist
     echo -e "${YELLOW}Checking configuration files:${NC}"
-    if [[ -f "config.yml" ]]; then
-        echo -e "  ${GREEN}✓ config.yml${NC}"
+    if [[ -f "config/config.yml" ]]; then
+        echo -e "  ${GREEN}✓ config/config.yml${NC}"
     else
-        echo -e "  ${RED}✗ config.yml (missing)${NC}"
+        echo -e "  ${RED}✗ config/config.yml (missing)${NC}"
     fi
     
-    if [[ -f "config-$ENVIRONMENT.yml" ]]; then
-        echo -e "  ${GREEN}✓ config-$ENVIRONMENT.yml${NC}"
+    if [[ -f "config/config-$ENVIRONMENT.yml" ]]; then
+        echo -e "  ${GREEN}✓ config/config-$ENVIRONMENT.yml${NC}"
     else
-        echo -e "  ${RED}✗ config-$ENVIRONMENT.yml (missing)${NC}"
+        echo -e "  ${RED}✗ config/config-$ENVIRONMENT.yml (missing)${NC}"
     fi
     
     if [[ -f "vault.yml" ]]; then
@@ -334,8 +335,8 @@ build_ansible_command() {
     fi
     cmd="$cmd -i \"$hosts_file\""
     
-    # Add environment variable
-    cmd="$cmd -e \"environment=$ENVIRONMENT\""
+    # Add environment variable, using a non-reserved name
+    cmd="$cmd -e \"target_env=$ENVIRONMENT\""
     
     # Add extra vars if provided
     if [[ -n "$extra_vars" ]]; then
@@ -419,16 +420,57 @@ select_playbook_and_run() {
 
     if list_playbooks "$playbook_path_prefix"; then
         read -p "Enter the number of the playbook you want to execute: " choice
-        read -p "Enter the name of the hosts to execute the playbook on: " hosts
+        read -p "Enter the hosts/group/IPs (comma-separated) to execute the playbook on: " hosts_input
+
+        local final_targets=()
+        local hosts_file="inventory/hosts-$ENVIRONMENT"
+        if [[ ! -f "$hosts_file" ]]; then
+            hosts_file="hosts"
+        fi
+
+        # Use Internal Field Separator (IFS) to split comma-separated input
+        IFS=',' read -ra targets_array <<< "$hosts_input"
+        for target in "${targets_array[@]}"; do
+            # Trim whitespace
+            target=$(echo "$target" | xargs)
+            if [[ -z "$target" ]]; then
+                continue
+            fi
+
+            if [[ "$target" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+                echo -e "${CYAN}    -> Searching for host with IP $target in $hosts_file...${NC}"
+                
+                local host_key
+                host_key=$(awk -v ip="$target" '
+                    NF == 1 && /:/ { current_host = $1; sub(/:$/, "", current_host); }
+                    NF == 2 && ($1 == "ansible_host:" || $1 == "ansible_ip:") && $2 == ip { print current_host; exit; }
+                ' "$hosts_file")
+
+                if [[ -n "$host_key" ]]; then
+                    echo -e "${GREEN}    -> Found host key: '$host_key'. Targeting this host.${NC}"
+                    final_targets+=("$host_key")
+                else
+                    echo -e "${YELLOW}    -> WARNING: IP $target not found in inventory. Using IP directly.${NC}"
+                    final_targets+=("$target")
+                fi
+            else
+                # Not an IP, so assume it's a hostname or group and add it directly
+                final_targets+=("$target")
+            fi
+        done
+
+        # Join the array back into a comma-separated string for Ansible
+        local target_hosts
+        target_hosts=$(IFS=,; echo "${final_targets[*]}")
 
         if [[ $choice -gt 0 && $choice -le ${#g_playbook_paths[@]} ]]; then
             local playbook_to_run="${g_playbook_paths[$((choice-1))]}"
-            echo -e "${GREEN}Executing $(basename "$playbook_to_run") on hosts $hosts...${NC}"
+            echo -e "${GREEN}Executing $(basename "$playbook_to_run") on hosts '$target_hosts'...${NC}"
             echo -e "${CYAN}Environment: $ENVIRONMENT${NC}"
 
             # Build and execute command
             local cmd
-            cmd=$(build_ansible_command "$playbook_to_run" "target_hosts=$hosts")
+            cmd=$(build_ansible_command "$playbook_to_run" "target_hosts=$target_hosts")
             echo -e "${YELLOW}Command: $cmd${NC}"
             echo ""
 
@@ -599,8 +641,8 @@ show_help() {
     echo "  4. Enter target hosts"
     echo ""
     echo -e "${YELLOW}Configuration Files:${NC}"
-    echo "  - config.yml: Main configuration"
-    echo "  - config-{environment}.yml: Environment overrides"
+    echo "  - config/config.yml: Main configuration"
+    echo "  - config/config-{environment}.yml: Environment overrides"
     echo "  - vault.yml: Encrypted sensitive data"
     echo ""
     echo -e "${YELLOW}Hosts Files:${NC}"

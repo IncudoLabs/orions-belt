@@ -1,0 +1,45 @@
+{# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Template ID: OB-005-T
+# Used by: OB-005
+#}
+# useradd defaults file
+GROUP=100
+
+# Default home directory
+HOME=/home
+
+# Default shell
+SHELL=/bin/bash
+
+# Default skeleton directory
+SKEL=/etc/skel
+
+# Default user creation settings
+CREATE_MAIL_SPOOL=yes
+
+# Default password expiration
+EXPIRE=
+
+# The number of days after a password expires until the account is permanently disabled
+INACTIVE={{ password_inactive | string | trim }}

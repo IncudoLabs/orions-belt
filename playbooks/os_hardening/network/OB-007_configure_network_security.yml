@@ -23,545 +23,76 @@
 # Script ID: OB-007
 
 ---
-- name: Configure Network Security Settings
+- name: Configure Network Security
   hosts: "{{ target_hosts }}"
   become: yes
   gather_facts: yes
-  
+
   pre_tasks:
     - name: Validate target_hosts is provided
       fail:
-        msg: |
-          CRITICAL SECURITY ERROR: target_hosts variable is not set!
-          
-          This playbook requires explicit specification of target hosts to prevent
-          accidental execution on unintended systems.
-          
-          Usage: ansible-playbook configure_network_security.yml --extra-vars "target_hosts=your_hosts"
-          
-          Examples:
-          - target_hosts=webservers
-          - target_hosts=db_servers
-          - target_hosts=192.168.1.10
-          - target_hosts=server1,server2,server3
+        msg: "CRITICAL SECURITY ERROR: target_hosts variable is not set!"
       when: target_hosts is not defined or target_hosts == ""
-  
-  vars:
-    # Network security kernel parameters
-    network_security_params:
-      # IP spoofing protection
-      net.ipv4.conf.all.rp_filter: 1
-      net.ipv4.conf.default.rp_filter: 1
-      
-      # Ignore ICMP redirects
-      net.ipv4.conf.all.accept_redirects: 0
-      net.ipv4.conf.default.accept_redirects: 0
-      net.ipv4.conf.all.secure_redirects: 0
-      net.ipv4.conf.default.secure_redirects: 0
-      
-      # Ignore ICMP broadcasts
-      net.ipv4.icmp_echo_ignore_broadcasts: 1
-      
-      # Enable bad error message protection
-      net.ipv4.icmp_ignore_bogus_error_responses: 1
-      
-      # Enable SYN flood protection
-      net.ipv4.tcp_syncookies: 1
-      
-      # Disable source routing
-      net.ipv4.conf.all.accept_source_route: 0
-      net.ipv4.conf.default.accept_source_route: 0
-      
-      # Log martians
-      net.ipv4.conf.all.log_martians: 1
-      net.ipv4.conf.default.log_martians: 1
-      
-      # Disable IPv6 if not needed
-      net.ipv6.conf.all.disable_ipv6: 0
-      net.ipv6.conf.default.disable_ipv6: 0
-      
-      # IPv6 security settings
-      net.ipv6.conf.all.accept_redirects: 0
-      net.ipv6.conf.default.accept_redirects: 0
-      net.ipv6.conf.all.accept_source_route: 0
-      net.ipv6.conf.default.accept_source_route: 0
-      
-      # TCP security settings
-      net.ipv4.tcp_max_syn_backlog: 2048
-      net.ipv4.tcp_synack_retries: 2
-      net.ipv4.tcp_syn_retries: 5
 
-    # Connection tracking parameters (conditional)
-    connection_tracking_params:
-      net.netfilter.nf_conntrack_max: 2000000
-      net.netfilter.nf_conntrack_tcp_timeout_established: 1200
-      net.netfilter.nf_conntrack_tcp_timeout_time_wait: 120
+  tasks:
+    - name: Configure kernel network security parameters
+      template:
+        src: OB-007-T_network-security.conf.j2
+        dest: /etc/sysctl.d/99-network-security.conf
+        mode: '0644'
+      notify: apply sysctl
 
-  handlers:
-    - name: reload nftables
-      systemd:
-        name: nftables
-        state: reloaded
+    - name: Secure network interfaces with networkd-dispatcher
+      template:
+        src: OB-007-T_network-interface-security.conf.j2
+        dest: /etc/networkd-dispatcher/routable.d/10-security
+        mode: '0755'
+      when: "'networkd-dispatcher' in ansible_facts.packages"
+
+    - name: Secure network interfaces with systemd-networkd
+      template:
+        src: OB-007-T_network-interface-security-systemd.conf.j2
+        dest: /etc/systemd/network/10-security.network
+        mode: '0644'
+      when: "'systemd-networkd' in ansible_facts.packages"
+      notify: restart systemd-networkd
+
+    - name: Secure network interfaces with ifupdown
+      template:
+        src: OB-007-T_network-interface-security.conf.j2
+        dest: /etc/network/if-up.d/security
+        mode: '0755'
+      when: "'ifupdown' in ansible_facts.packages"
+
+    - name: Install Fail2ban
+      apt:
+        name: fail2ban
+        state: present
+        update_cache: yes
       when: ansible_os_family == "Debian"
 
+    - name: Configure Fail2ban
+      template:
+        src: OB-007-T_fail2ban.conf.j2
+        dest: /etc/fail2ban/jail.local
+        mode: '0644'
+      notify: restart fail2ban
+
+    - name: Configure dynamic log scanning
+      template:
+        src: OB-007-T_dynamic-log-scan.conf.j2
+        dest: /etc/fail2ban/filter.d/dynamic-log-scan.conf
+        mode: '0644'
+      notify: restart fail2ban
+
+  handlers:
+    - name: apply sysctl
+      command: sysctl -p /etc/sysctl.d/99-network-security.conf
+    - name: restart systemd-networkd
+      systemd:
+        name: systemd-networkd
+        state: restarted
     - name: restart fail2ban
       systemd:
         name: fail2ban
-        state: restarted
-      when: ansible_os_family == "Debian"
-
-  tasks:
-    - name: Create backup of current sysctl configuration
-      copy:
-        src: /etc/sysctl.conf
-        dest: /etc/sysctl.conf.backup.{{ ansible_date_time.epoch }}
-        remote_src: yes
-        backup: yes
-      ignore_errors: yes
-
-    - name: Create backup of current sysctl.d files
-      shell: |
-        for file in /etc/sysctl.d/*.conf; do
-          if [ -f "$file" ]; then
-            cp "$file" "$file.backup.{{ ansible_date_time.epoch }}"
-          fi
-        done
-      changed_when: false
-      ignore_errors: yes
-
-    - name: Display current network security status
-      shell: |
-        echo "=== CURRENT NETWORK SECURITY STATUS ==="
-        echo "IP forwarding: $(sysctl -n net.ipv4.ip_forward)"
-        echo "RP filter: $(sysctl -n net.ipv4.conf.all.rp_filter)"
-        echo "Accept redirects: $(sysctl -n net.ipv4.conf.all.accept_redirects)"
-        echo "SYN cookies: $(sysctl -n net.ipv4.tcp_syncookies)"
-        echo "ICMP echo ignore broadcasts: $(sysctl -n net.ipv4.icmp_echo_ignore_broadcasts)"
-      register: current_network_status
-      changed_when: false
-
-    - name: Display current network security parameters
-      debug:
-        msg: |
-          === CURRENT NETWORK SECURITY PARAMETERS ===
-          {{ current_network_status.stdout }}
-
-    - name: Prompt for network security configuration
-      pause:
-        prompt: |
-          === NETWORK SECURITY CONFIGURATION ===
-          
-          The following network security parameters will be configured:
-          
-          IP Spoofing Protection:
-          - Enable reverse path filtering
-          - Disable source routing
-          
-          ICMP Protection:
-          - Ignore ICMP redirects
-          - Ignore ICMP broadcasts
-          - Enable bad error message protection
-          
-          TCP Protection:
-          - Enable SYN flood protection
-          - Optimize TCP connection settings
-          
-          IPv6 Security:
-          - Disable IPv6 redirects
-          - Disable IPv6 source routing
-          
-          Connection Tracking:
-          - Optimize connection tracking limits
-          
-          Proceed with network security configuration? (y/n):
-      register: network_security_prompt
-
-    - name: Configure network security parameters
-      sysctl:
-        name: "{{ item.key }}"
-        value: "{{ item.value }}"
-        state: present
-        sysctl_set: yes
-        reload: yes
-      loop: "{{ network_security_params | dict2items }}"
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Check if connection tracking module is available
-      stat:
-        path: /proc/sys/net/netfilter/nf_conntrack_max
-      register: conntrack_check
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Load nf_conntrack module if needed
-      modprobe:
-        name: nf_conntrack
-        state: present
-      when: 
-        - network_security_prompt.user_input | lower == 'y'
-        - not conntrack_check.stat.exists
-
-    - name: Configure connection tracking parameters (if available)
-      sysctl:
-        name: "{{ item.key }}"
-        value: "{{ item.value }}"
-        state: present
-        sysctl_set: yes
-        reload: yes
-      loop: "{{ connection_tracking_params | dict2items }}"
-      when: 
-        - network_security_prompt.user_input | lower == 'y'
-        - conntrack_check.stat.exists or conntrack_check.stat.exists is not defined
-      ignore_errors: yes
-      register: conntrack_config
-
-    - name: Display connection tracking configuration status
-      debug:
-        msg: |
-          === CONNECTION TRACKING CONFIGURATION ===
-          {% if conntrack_check.stat.exists %}
-          Connection tracking module: Available
-          {% else %}
-          Connection tracking module: Not available (skipped)
-          {% endif %}
-          
-          {% if conntrack_config is defined %}
-          Configuration results:
-          {% for result in conntrack_config.results %}
-          {% if result.changed %}
-          - {{ result.item.key }}: SUCCESS (changed)
-          {% elif result.failed %}
-          - {{ result.item.key }}: FAILED
-          {% else %}
-          - {{ result.item.key }}: ALREADY_SET
-          {% endif %}
-          {% endfor %}
-          {% endif %}
-
-    - name: Create persistent network security configuration
-      template:
-        src: network-security.conf.j2
-        dest: /etc/sysctl.d/99-network-security.conf
-        mode: '0644'
-        backup: yes
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Apply persistent configuration
-      shell: sysctl -p /etc/sysctl.d/99-network-security.conf
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Verify network security configuration
-      shell: |
-        echo "=== VERIFIED NETWORK SECURITY PARAMETERS ==="
-        echo "IP forwarding: $(sysctl -n net.ipv4.ip_forward)"
-        echo "RP filter: $(sysctl -n net.ipv4.conf.all.rp_filter)"
-        echo "Accept redirects: $(sysctl -n net.ipv4.conf.all.accept_redirects)"
-        echo "SYN cookies: $(sysctl -n net.ipv4.tcp_syncookies)"
-        echo "ICMP echo ignore broadcasts: $(sysctl -n net.ipv4.icmp_echo_ignore_broadcasts)"
-        echo "Log martians: $(sysctl -n net.ipv4.conf.all.log_martians)"
-      register: verified_network_status
-      changed_when: false
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Display verified network security parameters
-      debug:
-        msg: |
-          === VERIFIED NETWORK SECURITY PARAMETERS ===
-          {{ verified_network_status.stdout }}
-
-    - name: Check for networkd-dispatcher directory structure
-      stat:
-        path: /etc/networkd-dispatcher
-      register: networkd_dispatcher_check
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Check for systemd-networkd directory structure
-      stat:
-        path: /etc/systemd/network
-      register: systemd_network_check
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Create networkd-dispatcher directory structure if needed
-      file:
-        path: /etc/networkd-dispatcher/routable.d
-        state: directory
-        mode: '0755'
-        owner: root
-        group: root
-      when: 
-        - network_security_prompt.user_input | lower == 'y'
-        - networkd_dispatcher_check.stat.exists
-
-    - name: Configure network interface security (networkd-dispatcher)
-      template:
-        src: network-interface-security.conf.j2
-        dest: /etc/networkd-dispatcher/routable.d/50-network-security
-        mode: '0755'
-        backup: yes
-      when: 
-        - network_security_prompt.user_input | lower == 'y'
-        - networkd_dispatcher_check.stat.exists
-
-    - name: Configure network interface security (systemd-networkd)
-      template:
-        src: network-interface-security-systemd.conf.j2
-        dest: /etc/systemd/network/50-network-security.network
-        mode: '0644'
-        backup: yes
-      when: 
-        - network_security_prompt.user_input | lower == 'y'
-        - systemd_network_check.stat.exists
-
-    - name: Configure network interface security (rc.local fallback)
-      template:
-        src: network-interface-security.conf.j2
-        dest: /usr/local/bin/apply-network-security
-        mode: '0755'
-        backup: yes
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Add network security to rc.local if it exists
-      lineinfile:
-        path: /etc/rc.local
-        line: "/usr/local/bin/apply-network-security"
-        insertafter: "^exit 0"
-        create: yes
-        mode: '0755'
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Display network interface security configuration status
-      debug:
-        msg: |
-          === NETWORK INTERFACE SECURITY CONFIGURATION ===
-          Networkd-dispatcher available: {{ networkd_dispatcher_check.stat.exists }}
-          Systemd-networkd available: {{ systemd_network_check.stat.exists }}
-          
-          Configuration applied:
-          {% if networkd_dispatcher_check.stat.exists %}
-          - /etc/networkd-dispatcher/routable.d/50-network-security
-          {% endif %}
-          {% if systemd_network_check.stat.exists %}
-          - /etc/systemd/network/50-network-security.network
-          {% endif %}
-          - /usr/local/bin/apply-network-security (fallback)
-
-    - name: Configure packages non-interactively
-      shell: |
-        echo 'debconf debconf/frontend select noninteractive' | debconf-set-selections
-        echo 'fail2ban fail2ban/banaction select iptables-allports' | debconf-set-selections
-        echo 'fail2ban fail2ban/jail_fail2ban/port select ssh' | debconf-set-selections
-        echo 'fail2ban fail2ban/jail_fail2ban/protocol select tcp' | debconf-set-selections
-        echo 'fail2ban fail2ban/jail_fail2ban/logpath select /var/log/auth.log' | debconf-set-selections
-        echo 'fail2ban fail2ban/jail_fail2ban/maxretry select 3' | debconf-set-selections
-        echo 'fail2ban fail2ban/jail_fail2ban/bantime select 3600' | debconf-set-selections
-        echo 'fail2ban fail2ban/jail_fail2ban/findtime select 600' | debconf-set-selections
-        echo 'rkhunter rkhunter/update-command select apt-get update' | debconf-set-selections
-        echo 'rkhunter rkhunter/upgrade-command select apt-get upgrade' | debconf-set-selections
-        echo 'rkhunter rkhunter/run-check select true' | debconf-set-selections
-      when: 
-        - ansible_os_family == "Debian"
-        - network_security_prompt.user_input | lower == 'y'
-
-    - name: Install network security tools
-      apt:
-        name:
-          - fail2ban
-          - rkhunter
-          - chkrootkit
-          - lynis
-        state: present
-        update_cache: yes
-        dpkg_options: force-confdef,force-confold
-      environment:
-        DEBIAN_FRONTEND: noninteractive
-        APT_LISTCHANGES_FRONTEND: none
-      when: 
-        - ansible_os_family == "Debian"
-        - network_security_prompt.user_input | lower == 'y'
-
-    - name: Detect available log files for fail2ban configuration
-      find:
-        paths: 
-          - /var/log/apache2
-          - /var/log/nginx
-          - /var/log/mysql
-          - /var/log/postgresql
-          - /var/log
-        patterns:
-          - "*.log"
-          - "*error*"
-          - "*access*"
-          - "*auth*"
-        file_type: file
-      register: available_log_files
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Display detected log files
-      debug:
-        msg: |
-          === DETECTED LOG FILES ===
-          {% for file in available_log_files.files %}
-          - {{ file.path }}
-          {% endfor %}
-
-    - name: Check for specific services and their log files
-      shell: |
-        echo "=== SERVICE LOG DETECTION ==="
-        
-        # Apache
-        if [ -d "/var/log/apache2" ]; then
-          echo "Apache log directory found"
-          ls -la /var/log/apache2/*.log 2>/dev/null || echo "No Apache log files found"
-        fi
-        
-        # Nginx
-        if [ -d "/var/log/nginx" ]; then
-          echo "Nginx log directory found"
-          ls -la /var/log/nginx/*.log 2>/dev/null || echo "No Nginx log files found"
-        fi
-        
-        # MySQL
-        if [ -d "/var/log/mysql" ]; then
-          echo "MySQL log directory found"
-          ls -la /var/log/mysql/*.log 2>/dev/null || echo "No MySQL log files found"
-        fi
-        
-        # PostgreSQL
-        if [ -d "/var/log/postgresql" ]; then
-          echo "PostgreSQL log directory found"
-          ls -la /var/log/postgresql/*.log 2>/dev/null || echo "No PostgreSQL log files found"
-        fi
-        
-        # Mail logs
-        if [ -f "/var/log/mail.log" ]; then
-          echo "Mail log found: /var/log/mail.log"
-        fi
-        
-        # System logs
-        if [ -f "/var/log/syslog" ]; then
-          echo "System log found: /var/log/syslog"
-        fi
-      register: service_log_detection
-      changed_when: false
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Display service log detection results
-      debug:
-        msg: |
-          === SERVICE LOG DETECTION RESULTS ===
-          {{ service_log_detection.stdout }}
-
-    - name: Configure fail2ban with dynamic log detection
-      template:
-        src: fail2ban.conf.j2
-        dest: /etc/fail2ban/jail.local
-        mode: '0644'
-        backup: yes
-      notify: restart fail2ban
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Create custom fail2ban filter for dynamic log scanning
-      template:
-        src: dynamic-log-scan.conf.j2
-        dest: /etc/fail2ban/filter.d/dynamic-log-scan.conf
-        mode: '0644'
-        backup: yes
-      notify: restart fail2ban
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Enable and start fail2ban
-      systemd:
-        name: fail2ban
-        state: started
-        enabled: yes
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Wait for fail2ban service to be ready
-      shell: |
-        # Wait for fail2ban to be ready
-        for i in {1..30}; do
-          if systemctl is-active --quiet fail2ban && fail2ban-client ping >/dev/null 2>&1; then
-            echo "fail2ban is ready"
-            exit 0
-          fi
-          sleep 1
-        done
-        echo "fail2ban not ready after 30 seconds"
-        exit 1
-      register: fail2ban_ready_check
-      changed_when: false
-      failed_when: false
-      when: network_security_prompt.user_input | lower == 'y'
-
-    - name: Test fail2ban configuration
-      shell: fail2ban-client reload
-      register: fail2ban_test
-      changed_when: false
-      failed_when: false
-      when: 
-        - network_security_prompt.user_input | lower == 'y'
-        - fail2ban_ready_check.rc == 0
-
-    - name: Display fail2ban test results
-      debug:
-        msg: |
-          === FAIL2BAN CONFIGURATION TEST ===
-          Service ready: {{ 'YES' if fail2ban_ready_check.rc == 0 else 'NO' }}
-          {% if fail2ban_ready_check.rc == 0 %}
-          {% if fail2ban_test.rc == 0 %}
-          Configuration test: PASSED
-          {% else %}
-          Configuration test: FAILED (rc: {{ fail2ban_test.rc }})
-          Error: {{ fail2ban_test.stderr }}
-          {% endif %}
-          {% else %}
-          Configuration test: SKIPPED (service not ready)
-          {% endif %}
-
-    - name: Display fail2ban status
-      shell: fail2ban-client status
-      register: fail2ban_status
-      changed_when: false
-      failed_when: false
-      when: 
-        - network_security_prompt.user_input | lower == 'y'
-        - fail2ban_ready_check.rc == 0
-
-    - name: Display fail2ban configuration status
-      debug:
-        msg: |
-          === FAIL2BAN CONFIGURATION STATUS ===
-          Service ready: {{ 'YES' if fail2ban_ready_check.rc == 0 else 'NO' }}
-          {% if fail2ban_ready_check.rc == 0 %}
-          {% if fail2ban_status.rc == 0 %}
-          Active jails:
-          {{ fail2ban_status.stdout }}
-          {% else %}
-          Could not retrieve jail status: {{ fail2ban_status.stderr }}
-          {% endif %}
-          {% else %}
-          Service not ready - check systemctl status fail2ban for details
-          {% endif %}
-
-    - name: Display completion summary
-      debug:
-        msg: |
-          === NETWORK SECURITY CONFIGURATION COMPLETED ===
-          
-          Configuration applied:
-          - Network security kernel parameters
-          - Persistent sysctl configuration
-          - Network interface security
-          - Fail2ban intrusion prevention (with dynamic log detection)
-          - Security monitoring tools installed
-          
-          Backup files created:
-          - /etc/sysctl.conf.backup.{{ ansible_date_time.epoch }}
-          - /etc/sysctl.d/*.conf.backup.{{ ansible_date_time.epoch }}
-          
-          Log files detected: {{ available_log_files.files | length }}
-          
-          To verify configuration:
-          - Check: sysctl -a | grep -E "(rp_filter|accept_redirects|syncookies)"
-          - Check: fail2ban-client status
-          - Check: systemctl status fail2ban
-          - Check: fail2ban-client get logpath <jail_name> 
+        state: restarted 
