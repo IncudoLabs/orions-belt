@@ -84,17 +84,17 @@
         update_cache: yes
       when: ansible_os_family == "Debian"
 
-    - name: Create secure SSH configuration
+    - name: Configure sshd
       template:
-        src: sshd_config.j2
+        src: OB-004-T_sshd_config.j2
         dest: /etc/ssh/sshd_config
         mode: '0600'
         backup: yes
       notify: restart ssh
 
-    - name: Create SSH client configuration
+    - name: Configure ssh client
       template:
-        src: ssh_config.j2
+        src: OB-004-T_ssh_config.j2
         dest: /etc/ssh/ssh_config
         mode: '0644'
         backup: yes

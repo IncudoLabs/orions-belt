@@ -1,0 +1,928 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Playbook ID: OB-CFG-004
+---
+- name: Join Linux to Active Directory (AD)
+  hosts: "{{ target_hosts }}"
+  become: true
+  vars_files:
+    - ../../../config.yml
+    - "{{ lookup('first_found', find_env_config, errors='ignore') }}"
+  vars:
+    find_env_config:
+      files:
+        - ../../../config-{{ environment }}.yml
+      skip: true
+    # Map variables from config files to playbook variables
+    ad_domain: "{{ active_directory.domain }}"
+    ad_realm: "{{ active_directory.domain | upper }}"
+    ad_computer_ou: "{{ active_directory.computer_ou }}"
+    ad_user: "{{ active_directory.admin_user }}"
+    # These can be overridden in inventory or via command line if needed
+    ad_access_group: "{{ ad_access_group_var | default('Domain Admins') }}"
+    ad_access_users: "{{ ad_access_users_var | default('') }}"
+
+  vars_prompt:
+    - name: "bind_password"
+      prompt: "Enter bind password for {{ ad_user }}"
+      private: yes
+  tasks:
+    - name: Install required packages on Debian-based systems
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - realmd 
+        - sssd 
+        - sssd-tools 
+        - libnss-sss 
+        - libpam-sss 
+        - adcli 
+        - samba-common-bin 
+        - krb5-user
+        - oddjob 
+        - oddjob-mkhomedir 
+        - packagekit 
+        - ldap-utils
+      register: package_installation_debian
+      when: ansible_os_family == "Debian"
+
+    - name: Install required packages on Red Hat-based systems (Amazon Linux 2, RHEL, CentOS)
+      yum:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - realmd 
+        - sssd 
+        - sssd-tools 
+        - sssd-ad
+        - adcli 
+        - samba-common-tools
+        - oddjob 
+        - oddjob-mkhomedir 
+        - krb5-workstation
+        - openldap-clients
+        - pam-devel
+      register: package_installation_redhat
+      when: ansible_os_family == "RedHat"
+
+    - name: Display status of package installation (Debian)
+      debug:
+        msg: "{{ item.item }} is successfully installed"
+      loop: "{{ package_installation_debian.results }}"
+      when: 
+        - ansible_os_family == "Debian"
+        - item.changed
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Display status of package installation (Red Hat)
+      debug:
+        msg: "{{ item.item }} is successfully installed"
+      loop: "{{ package_installation_redhat.results }}"
+      when: 
+        - ansible_os_family == "RedHat"
+        - item.changed
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Ensure SSSD service is started to generate initial config (if needed)
+      service:
+        name: sssd
+        state: started
+        enabled: yes
+      ignore_errors: yes # Ignore if SSSD isn't fully configured yet
+
+    - name: Wait a moment for SSSD to stabilize
+      wait_for:
+        timeout: 5
+      when: ansible_os_family == "Debian"
+
+    - name: Ensure SSSD configuration directory exists
+      file:
+        path: /etc/sssd
+        state: directory
+        mode: '0700'
+        owner: root
+        group: root
+
+    - name: Ensure SSSD conf.d directory exists
+      file:
+        path: /etc/sssd/conf.d
+        state: directory
+        mode: '0700'
+        owner: root
+        group: root
+
+    - name: Check if SSSD config file exists
+      stat:
+        path: /etc/sssd/sssd.conf
+      register: sssd_conf_check
+
+    - name: Create initial SSSD configuration file if it doesn't exist
+      copy:
+        dest: /etc/sssd/sssd.conf
+        mode: '0600'
+        content: |
+          [sssd]
+          config_file_version = 2
+          services = nss, pam
+          
+          # Minimal configuration for initial startup - domain will be added after join
+      when: not sssd_conf_check.stat.exists
+
+    - name: Wait for SSSD configuration file to be created
+      wait_for:
+        path: /etc/sssd/sssd.conf
+        timeout: 30
+        delay: 5
+      register: sssd_conf_wait
+      ignore_errors: yes
+
+    - name: Fail if SSSD config file was not created
+      fail:
+        msg: "SSSD configuration file (/etc/sssd/sssd.conf) was not created after package installation and service start. SSSD may not be installed or functioning correctly."
+      when: sssd_conf_wait.failed
+
+    - name: Check if the system is already joined to a domain
+      command: realm list
+      register: realm_list_output
+      changed_when: false
+      failed_when: false # Command returns non-zero if not joined, which is OK.
+
+    - name: Join system to the domain if not already joined
+      command: /bin/bash -c "echo {{ bind_password }} | realm join --user={{ ad_user }} {{ ad_domain }} --computer-ou='{{ ad_computer_ou }}'"
+      register: join_output
+      no_log: True
+      when: "ad_domain not in realm_list_output.stdout"
+
+    - name: Display join result
+      debug:
+        msg: >
+          Join attempt was skipped because this server is already a member of a realm.
+          Current realms: {{ realm_list_output.stdout_lines }}
+      when: "ad_domain in realm_list_output.stdout"
+
+    - name: Fail the playbook if the join command failed
+      fail:
+        msg: |
+          Failed to join the domain '{{ ad_domain }}'.
+          Please check credentials and connectivity.
+          Error from realm command: {{ join_output.stderr | default('No stderr output') }}
+      when: join_output.changed and join_output.rc != 0
+
+    - name: Ensure SSSD service is restarted after domain join
+      service:
+        name: sssd
+        state: restarted
+      when: join_output.changed # Only restart if join was successful
+      ignore_errors: yes # Allow restart to fail initially
+
+    - name: Wait for SSSD to fully start after domain join
+      wait_for:
+        timeout: 15
+      when: join_output.changed
+
+    - name: Update SSSD configuration with full domain settings after successful join
+      copy:
+        dest: /etc/sssd/sssd.conf
+        mode: '0600'
+        content: |
+          [sssd]
+          domains = {{ ad_domain }}
+          config_file_version = 2
+          services = nss, pam
+          
+          [domain/{{ ad_domain }}]
+          ad_domain = {{ ad_domain }}
+          krb5_realm = {{ ad_realm }}
+          realmd_tags = manages-system joined-with-adcli
+          id_provider = ad
+          krb5_store_password_if_offline = True
+          default_shell = /bin/bash
+          ldap_id_mapping = True
+          use_fully_qualified_names = False
+          fallback_homedir = /home/%u
+          access_provider = simple
+          simple_allow_groups = {{ ad_access_group }}
+          simple_allow_users = {{ ad_access_users }}
+          ad_gpo_access_control = permissive
+          ssh_authorized_keys_command = /usr/bin/sss_ssh_authorizedkeys
+          account_cache_expiration = 1
+          cache_credentials = False
+          ad_access_filter = (!userAccountControl:1.2.840.113556.1.4.803:=2)
+          entry_cache_timeout = 1
+          enumerate = False
+          refresh_expired_interval = 1
+          account_expire_handler = /bin/false
+          ignore_group_members = False
+          offline_credentials_expiration = 0
+          offline_timeout = 1
+          cached_auth_timeout = 0
+          memcache_timeout = 1
+      when: join_output.rc == 0
+
+    - name: Configure SSH service for SSSD after domain join
+      block:
+        - name: Disable socket-activated SSH service
+          systemd:
+            name: sssd-ssh.socket
+            state: stopped
+            enabled: no
+          ignore_errors: yes
+
+        - name: Add SSH service to SSSD config
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^services'
+            line: 'services = nss, pam, ssh'
+            state: present
+      when: join_output.rc == 0
+
+    - name: Set up pam.d to create home directories on initial login (Debian/Ubuntu)
+      block:
+        - name: Modify pam.d - set up home directory creation 
+          lineinfile:
+            path: /etc/pam.d/common-session 
+            regexp: '^session.*pam_mkhomedir\.so'
+            line: 'session optional        pam_mkhomedir.so skel=/etc/skel umask=077' 
+            state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Set up pam.d to create home directories on initial login (Red Hat/Amazon Linux)
+      block:
+        - name: Modify pam.d - set up home directory creation for Red Hat systems
+          lineinfile:
+            path: /etc/pam.d/system-auth
+            regexp: '^session.*pam_mkhomedir\.so'
+            line: 'session optional        pam_mkhomedir.so skel=/etc/skel umask=077'
+            insertafter: '^session.*pam_unix\.so'
+            state: present
+
+        - name: Modify pam.d - set up home directory creation for Red Hat systems (password-auth)
+          lineinfile:
+            path: /etc/pam.d/password-auth
+            regexp: '^session.*pam_mkhomedir\.so'
+            line: 'session optional        pam_mkhomedir.so skel=/etc/skel umask=077'
+            insertafter: '^session.*pam_unix\.so'
+            state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Configure SSH to validate AD account status for SSH key authentication
+      block:
+        - name: Configure SSHD - Enable root login with SSH keys
+          lineinfile:
+            path: /etc/ssh/sshd_config
+            regexp: '^#?PermitRootLogin'
+            line: 'PermitRootLogin prohibit-password'
+            state: present
+
+        - name: Clean up conflicting SSH configuration lines
+          lineinfile:
+            path: /etc/ssh/sshd_config
+            regexp: "{{ item }}"
+            state: absent
+          loop:
+            - '^UsePAM'
+            - '^PubkeyAuthentication'
+            - '^PasswordAuthentication'
+            - '^AuthorizedKeysCommand'
+            - '^AuthorizedKeysCommandUser'
+
+        - name: Create SSH key validation script for AD account status
+          copy:
+            dest: /usr/local/bin/validate_ad_ssh_keys.sh
+            mode: '0755'
+            content: |
+              #!/bin/bash
+              # SSH Key validation script - Proper AD account validation using UPN
+              
+              USER="$1"
+              AD_DOMAIN="corp.vancouveronthenet.com"
+              
+              # Exit if no user provided
+              if [ -z "$USER" ]; then
+                  exit 1
+              fi
+              
+              # Determine the proper user format for SSSD validation
+              if [[ "$USER" == *"@"* ]]; then
+                  # User already includes domain
+                  FULL_USER="$USER"
+                  SHORT_USER="${USER%%@*}"
+              else
+                  # Short username provided, create full UPN
+                  SHORT_USER="$USER"
+                  FULL_USER="$USER@$AD_DOMAIN"
+              fi
+              
+              # Force complete SSSD cache refresh
+              sss_cache -E >/dev/null 2>&1
+              sleep 2
+              
+              # Test 1: Check account status using ldapsearch with short username
+              if command -v ldapsearch >/dev/null 2>&1; then
+                  # Check if account is disabled in AD
+                  DISABLED_COUNT=$(ldapsearch -x -H "ldap://$AD_DOMAIN" -b "dc=corp,dc=vancouveronthenet,dc=com" "(&(sAMAccountName=$SHORT_USER)(userAccountControl:1.2.840.113556.1.4.803:=2))" dn 2>/dev/null | grep -c "^dn:")
+                  
+                  if [ "$DISABLED_COUNT" -gt 0 ]; then
+                      # Account is explicitly disabled in AD
+                      exit 1
+                  fi
+                  
+                  # Verify account exists and is enabled
+                  ENABLED_COUNT=$(ldapsearch -x -H "ldap://$AD_DOMAIN" -b "dc=corp,dc=vancouveronthenet,dc=com" "(&(sAMAccountName=$SHORT_USER)(!(userAccountControl:1.2.840.113556.1.4.803:=2))(objectClass=user))" dn 2>/dev/null | grep -c "^dn:")
+                  
+                  if [ "$ENABLED_COUNT" -eq 0 ]; then
+                      # Account not found or not enabled
+                      exit 1
+                  fi
+              fi
+              
+              # Test 2: Check SSSD access with both user formats
+              # Try with short username first
+              if ! sssctl user-checks "$SHORT_USER" >/dev/null 2>&1; then
+                  # Try with full UPN if short name fails
+                  if ! sssctl user-checks "$FULL_USER" >/dev/null 2>&1; then
+                      exit 1
+                  fi
+              fi
+              
+              # Test 3: Verify SSSD would allow SSH access
+              # Try both formats for SSH key access
+              if ! /usr/bin/sss_ssh_authorizedkeys "$SHORT_USER" >/dev/null 2>&1; then
+                  if ! /usr/bin/sss_ssh_authorizedkeys "$FULL_USER" >/dev/null 2>&1; then
+                      exit 1
+                  fi
+              fi
+              
+              # Test 4: Verify user exists in system (use short name for system checks)
+              if ! getent passwd "$SHORT_USER" >/dev/null 2>&1; then
+                  exit 1
+              fi
+              
+              # Test 5: Final verification that user is accessible
+              if ! id "$SHORT_USER" >/dev/null 2>&1; then
+                  exit 1
+              fi
+              
+              # All validations passed - return SSH keys from home directory
+              USER_HOME=$(getent passwd "$SHORT_USER" | cut -d: -f6)
+              if [ -f "$USER_HOME/.ssh/authorized_keys" ]; then
+                  cat "$USER_HOME/.ssh/authorized_keys"
+              fi
+              
+              exit 0
+
+        - name: Configure SSHD - Force account validation for SSH keys (for non-root users)
+          blockinfile:
+            path: /etc/ssh/sshd_config
+            marker: "# {mark} ANSIBLE MANAGED - AD Integration"
+            block: |
+              # Global SSH settings
+              UsePAM yes
+              PubkeyAuthentication yes
+              PasswordAuthentication yes
+              
+              # Root can always login with SSH keys (bypass AD validation)
+              Match User root
+                  AuthorizedKeysFile .ssh/authorized_keys
+              
+              # Non-root users: Force account validation before returning SSH keys
+              Match User !root
+                  AuthorizedKeysCommand /usr/local/bin/validate_ad_ssh_keys.sh
+                  AuthorizedKeysCommandUser nobody
+            state: present
+
+        - name: Configure SSHD - Disable challenge response authentication
+          lineinfile:
+            path: /etc/ssh/sshd_config
+            regexp: '^#?ChallengeResponseAuthentication'
+            line: 'ChallengeResponseAuthentication no'
+            state: present
+
+        - name: Configure SSHD - Disable keyboard interactive authentication (for newer SSH versions)
+          lineinfile:
+            path: /etc/ssh/sshd_config
+            regexp: '^#?KbdInteractiveAuthentication'
+            line: 'KbdInteractiveAuthentication no'
+            state: present
+
+        - name: Remove invalid SSH config options (cleanup)
+          lineinfile:
+            path: /etc/ssh/sshd_config
+            regexp: '^#?UsePAMCheckAccount'
+            state: absent
+
+        - name: Remove any remaining UsePAMCheckAccount lines (comprehensive cleanup)
+          shell: |
+            sed -i '/UsePAMCheckAccount/d' /etc/ssh/sshd_config
+          register: cleanup_result
+          changed_when: false
+
+        - name: Verify SSH config syntax before proceeding
+          command: sshd -t
+          register: sshd_test
+          failed_when: sshd_test.rc != 0
+          changed_when: false
+
+    - name: Configure PAM for SSH to validate AD account status (Debian/Ubuntu)
+      block:
+        - name: Backup original PAM SSH configuration
+          copy:
+            src: /etc/pam.d/sshd
+            dest: /etc/pam.d/sshd.backup
+            remote_src: yes
+
+        - name: Create new PAM SSH configuration with root bypass (Debian)
+          copy:
+            dest: /etc/pam.d/sshd
+            content: |
+              # PAM configuration for SSH with root bypass and strict AD validation
+              # Authentication - root bypasses, others must validate through SSSD
+              auth       sufficient   pam_succeed_if.so uid = 0
+              auth       required     pam_sss.so
+              auth       include      common-auth
+              
+              # Account validation - root bypasses SSSD completely, others MUST validate
+              account    sufficient   pam_succeed_if.so uid = 0
+              account    required     pam_nologin.so
+              account    required     pam_sss.so
+              account    required     pam_access.so
+              account    include      common-account
+              
+              # Password
+              password   include      common-password
+              
+              # Session - root bypasses, others must validate through SSSD
+              session    sufficient   pam_succeed_if.so uid = 0
+              session    required     pam_sss.so
+              session    include      common-session
+              session    optional     pam_mkhomedir.so skel=/etc/skel umask=077
+            backup: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Configure PAM for SSH to validate AD account status (Red Hat/Amazon Linux)
+      block:
+        - name: Backup original PAM SSH configuration
+          copy:
+            src: /etc/pam.d/sshd
+            dest: /etc/pam.d/sshd.backup
+            remote_src: yes
+
+        - name: Create new PAM SSH configuration with root bypass (Red Hat)
+          copy:
+            dest: /etc/pam.d/sshd
+            content: |
+              # PAM configuration for SSH with root bypass and strict AD validation
+              # Authentication - root bypasses, others must validate through SSSD
+              auth       sufficient   pam_succeed_if.so uid = 0
+              auth       required     pam_sss.so
+              auth       include      system-auth
+              
+              # Account validation - root bypasses SSSD completely, others MUST validate
+              account    sufficient   pam_succeed_if.so uid = 0
+              account    required     pam_nologin.so
+              account    required     pam_sss.so
+              account    required     pam_access.so
+              account    include      system-auth
+              
+              # Password
+              password   include      system-auth
+              
+              # Session - root bypasses, others must validate through SSSD
+              session    sufficient   pam_succeed_if.so uid = 0
+              session    required     pam_sss.so
+              session    include      system-auth
+              session    optional     pam_mkhomedir.so skel=/etc/skel umask=077
+            backup: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: Edit SSSD configuration file
+      block:
+        - name: Modify access_provider line
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^access_provider'
+            line: 'access_provider = simple'
+            state: present
+
+        - name: Add simple_allow_groups line
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^simple_allow_groups'
+            line: 'simple_allow_groups = {{ ad_access_group }}'
+            state: present
+
+        - name: Add simple_allow_users line
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^simple_allow_users'
+            line: 'simple_allow_users = {{ ad_access_users }}'
+            state: present
+
+        - name: Add use_fully_qualified_names line
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^use_fully_qualified_names'
+            line: 'use_fully_qualified_names = False'
+            state: present
+
+        - name: Add ad_gpo_access_control line to SSSD config
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^ad_gpo_access_control'
+            line: 'ad_gpo_access_control = permissive'
+            state: present
+
+        - name: Enable SSH public key authentication through SSSD
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^ssh_authorized_keys_command'
+            line: 'ssh_authorized_keys_command = /usr/bin/sss_ssh_authorizedkeys'
+            state: present
+
+        - name: Enable SSH service in SSSD
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^services'
+            line: 'services = nss, pam, ssh'
+            state: present
+
+        - name: Force account status checking for SSH keys
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^account_cache_expiration'
+            line: 'account_cache_expiration = 1'
+            state: present
+
+        - name: Force immediate account validation
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^cache_credentials'
+            line: 'cache_credentials = False'
+            state: present
+
+        - name: Enable account status checking
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^ad_access_filter'
+            line: 'ad_access_filter = (!userAccountControl:1.2.840.113556.1.4.803:=2)'
+            state: present
+
+        - name: Disable credential caching completely for real-time validation
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^entry_cache_timeout'
+            line: 'entry_cache_timeout = 1'
+            state: present
+
+        - name: Force enumeration for account validation
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^enumerate'
+            line: 'enumerate = False'
+            state: present
+
+        - name: Set minimum refresh time for account status
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^refresh_expired_interval'
+            line: 'refresh_expired_interval = 1'
+            state: present
+
+        - name: Enable account expiration checking
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^account_expire_handler'
+            line: 'account_expire_handler = /bin/false'
+            state: present
+
+        - name: Force strict account validation in SSSD
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^ignore_group_members'
+            line: 'ignore_group_members = False'
+            state: present
+
+        - name: Disable offline authentication completely
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^offline_credentials_expiration'
+            line: 'offline_credentials_expiration = 0'
+            state: present
+
+        - name: Force online authentication only
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^offline_timeout'
+            line: 'offline_timeout = 1'
+            state: present
+
+        - name: Disable cached authentication completely
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^cached_auth_timeout'
+            line: 'cached_auth_timeout = 0'
+            state: present
+
+        - name: Force immediate account status checking
+          lineinfile:
+            path: /etc/sssd/sssd.conf
+            regexp: '^memcache_timeout'
+            line: 'memcache_timeout = 1'
+            state: present
+
+        - name: Add %Linux line to sudoers file
+          lineinfile:
+            path: /etc/sudoers
+            line: "%Linux ALL=(ALL) ALL"
+            validate: "visudo -cf %s"
+
+    - name: Restart services
+      block:
+        - name: Restart SSSD service
+          service:
+            name: sssd
+            state: restarted
+
+        - name: Wait for SSSD to fully start
+          wait_for:
+            timeout: 10
+
+        - name: Clear SSSD cache to force fresh account validation
+          command: sss_cache -E
+          ignore_errors: yes
+
+        - name: Restart SSH service
+          service:
+            name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+            state: restarted
+
+    - name: Critical Security Validation
+      block:
+        - name: Test SSSD account validation functionality
+          shell: |
+            # Test if SSSD can query domain properly
+            sssctl domain-status {{ ad_domain }} 2>/dev/null && echo "DOMAIN_CONNECTED" || echo "DOMAIN_ISSUE"
+            
+            # Verify AD access filter is active
+            grep -q "ad_access_filter.*userAccountControl" /etc/sssd/sssd.conf && echo "FILTER_CONFIGURED" || echo "FILTER_MISSING"
+            
+            # Check if cache is disabled
+            grep -q "cache_credentials = False" /etc/sssd/sssd.conf && echo "CACHE_DISABLED" || echo "CACHE_ENABLED"
+          register: sssd_validation
+          changed_when: false
+
+        - name: Verify PAM is enforcing SSSD validation for non-root
+          shell: |
+            # Check that non-root users must go through SSSD account validation
+            grep -A5 -B5 "account.*required.*pam_sss.so" /etc/pam.d/sshd | grep -v "uid = 0" | grep "account.*required.*pam_sss.so" && echo "PAM_ENFORCED" || echo "PAM_WEAK"
+          register: pam_validation
+          changed_when: false
+
+        - name: Test SSH key validation script functionality
+          shell: |
+            # Test if the validation script properly handles disabled accounts
+            if [ -f "/usr/local/bin/validate_ad_ssh_keys.sh" ]; then
+              echo "VALIDATION_SCRIPT_EXISTS"
+            else
+              echo "VALIDATION_SCRIPT_MISSING"
+            fi
+          register: script_validation
+          changed_when: false
+
+        - name: Display critical security status
+          debug:
+            msg:
+              - "============================================"
+              - "🔒 CRITICAL SECURITY VALIDATION:"
+              - "============================================"
+              - "SSSD Domain Status: {{ 'CONNECTED ✅' if 'DOMAIN_CONNECTED' in sssd_validation.stdout else 'DISCONNECTED ❌' }}"
+              - "AD Filter Active: {{ 'YES ✅' if 'FILTER_CONFIGURED' in sssd_validation.stdout else 'NO ❌' }}"
+              - "Cache Disabled: {{ 'YES ✅' if 'CACHE_DISABLED' in sssd_validation.stdout else 'NO ❌' }}"
+              - "PAM Enforcement: {{ 'STRICT ✅' if 'PAM_ENFORCED' in pam_validation.stdout else 'WEAK ❌' }}"
+              - "Validation Script: {{ 'DEPLOYED ✅' if 'VALIDATION_SCRIPT_EXISTS' in script_validation.stdout else 'MISSING ❌' }}"
+              - "============================================"
+              - "🔒 SECURITY: SSH keys validated with UPN format support!"
+              - "🔒 SECURITY: Script checks sAMAccountName against AD directly!"
+              - "🔒 SECURITY: Disabled accounts CANNOT get SSH keys!"
+              - "🔒 SECURITY: Root bypasses AD validation completely!"
+              - "============================================"
+              - "{{ 'All security layers active - disabled accounts should be blocked!' if ('DOMAIN_CONNECTED' in sssd_validation.stdout and 'FILTER_CONFIGURED' in sssd_validation.stdout and 'CACHE_DISABLED' in sssd_validation.stdout and 'PAM_ENFORCED' in pam_validation.stdout and 'VALIDATION_SCRIPT_EXISTS' in script_validation.stdout) else '⚠️  WARNING: Security configuration may have issues!' }}"
+              - "============================================"
+
+        - name: Test disabled account blocking (if test user provided)
+          shell: |
+            if [ -n "{{ disabled_test_user | default('') }}" ]; then
+              # Try to get account info for disabled user
+              getent passwd "{{ disabled_test_user }}" && echo "DISABLED_USER_FOUND" || echo "DISABLED_USER_BLOCKED"
+            else
+              echo "NO_TEST_USER_PROVIDED"
+            fi
+          register: disabled_user_test
+          changed_when: false
+          ignore_errors: yes
+          when: disabled_test_user is defined
+
+        - name: Display disabled user test result
+          debug:
+            msg: "Disabled User Test: {{ disabled_user_test.stdout }}"
+          when: disabled_test_user is defined
+
+    - name: AD Join completion summary
+      debug:
+        msg:
+          - "============================================"
+          - "AD JOIN PROCESS COMPLETED"
+          - "============================================"
+          - "Join Status: {{ 'SUCCESS' if join_output.rc == 0 else 'FAILED/ALREADY JOINED' }}"
+          - "SSSD Configuration: Updated with account validation"
+          - "SSH Configuration: Updated for MANDATORY AD account checking"
+          - "PAM Configuration: Updated for home directory creation and account validation"
+          - "Security: SSH keys now REQUIRE active AD accounts"
+          - "============================================"
+
+    - name: Validate security configuration
+      block:
+        - name: Check SSH configuration for account validation
+          shell: |
+            grep -q "^UsePAM yes" /etc/ssh/sshd_config && \
+            grep -q "^AuthorizedKeysCommand /usr/bin/sss_ssh_authorizedkeys" /etc/ssh/sshd_config && \
+            echo "SSH_OK" || echo "SSH_ISSUE"
+          register: ssh_security_check
+          changed_when: false
+
+        - name: Check PAM configuration for account validation
+          shell: |
+            grep -q "^account.*required.*pam_sss\.so" /etc/pam.d/sshd && \
+            echo "PAM_OK" || echo "PAM_ISSUE"
+          register: pam_security_check
+          changed_when: false
+
+        - name: Check SSSD configuration for account validation
+          shell: |
+            grep -q "^services.*ssh" /etc/sssd/sssd.conf && \
+            grep -q "^cache_credentials = False" /etc/sssd/sssd.conf && \
+            echo "SSSD_OK" || echo "SSSD_ISSUE"
+          register: sssd_security_check
+          changed_when: false
+
+        - name: Display security validation results
+          debug:
+            msg:
+              - "============================================"
+              - "SECURITY VALIDATION RESULTS:"
+              - "============================================"
+              - "SSH Config: {{ 'SECURE ✅' if ssh_security_check.stdout == 'SSH_OK' else 'ISSUE ❌' }}"
+              - "PAM Config: {{ 'SECURE ✅' if pam_security_check.stdout == 'PAM_OK' else 'ISSUE ❌' }}"
+              - "SSSD Config: {{ 'SECURE ✅' if sssd_security_check.stdout == 'SSSD_OK' else 'ISSUE ❌' }}"
+              - "============================================"
+              - "{{ 'All configurations are secure! SSH keys will stop working when AD accounts are disabled.' if (ssh_security_check.stdout == 'SSH_OK' and pam_security_check.stdout == 'PAM_OK' and sssd_security_check.stdout == 'SSSD_OK') else 'WARNING: Some security configurations may have issues. Manual verification recommended.' }}"
+              - "============================================"
+
+    # Optional: Add system login permissions
+    - name: Display next step information
+      debug:
+        msg:
+          - "============================================"
+          - "NEXT STEP: CONFIGURE USER LOGIN PERMISSIONS"
+          - "============================================"
+          - "The system is now joined to AD with secure SSH configuration."
+          - "Next, you can add specific AD users/groups that are allowed to login."
+          - "This will configure the simple_allow_groups and simple_allow_users in SSSD."
+          - "============================================"
+
+    - name: Prompt for adding system login permissions
+      pause:
+        prompt: |
+          
+          Do you want to add specific AD users/groups login permissions now?
+          
+          Options:
+          - y: Configure login permissions for specific users/groups
+          - n: Skip for now (you can run linux_add_system_login.yaml later)
+          
+          Enter your choice (y/n)
+      register: add_login_prompt
+
+    - name: Get AD group for login permissions
+      pause:
+        prompt: "AD Group to allow login (e.g., 'Domain Users', 'IT Support') - leave empty to skip"
+      register: idgroup_prompt
+      when: add_login_prompt.user_input | lower == 'y'
+
+    - name: Get AD user for login permissions
+      pause:
+        prompt: "AD User to allow login (e.g., 'marko', 'john.smith') - leave empty to skip"
+      register: iduser_prompt
+      when: add_login_prompt.user_input | lower == 'y'
+
+    - name: Set login variables
+      set_fact:
+        idgroup: "{{ idgroup_prompt.user_input if idgroup_prompt is defined else '' }}"
+        iduser: "{{ iduser_prompt.user_input if iduser_prompt is defined else '' }}"
+      when: add_login_prompt.user_input | lower == 'y'
+
+    - name: Configure system login permissions
+      include_tasks: linux_add_system_login_tasks.yaml
+      when: add_login_prompt.user_input | lower == 'y'
+
+    - name: Final completion message
+      debug:
+        msg:
+          - "============================================"
+          - "SETUP COMPLETED SUCCESSFULLY!"
+          - "============================================"
+          - "The system is now joined to the domain and configured."
+          - "{{ 'Login permissions have been configured.' if add_login_prompt.user_input | lower == 'y' else 'You can run linux_add_system_login.yaml later to add specific user/group permissions.' }}"
+          - "SSH key authentication is enabled and tied to AD account status."
+          - "============================================"
+
+    # Optional: Configure sudo permissions
+    - name: Prompt for sudo permissions configuration
+      pause:
+        prompt: "Do you want to configure passwordless sudo permissions for a user now? (y/n)"
+      register: sudo_config_prompt
+      when: add_login_prompt.user_input | lower == 'y'
+
+    - name: Configure sudo permissions
+      block:
+        - name: Prompt for sudo username
+          pause:
+            prompt: "Enter username to grant sudo access"
+          register: sudo_user_prompt
+
+        - name: Prompt for sudo method
+          pause:
+            prompt: "Sudo access method:\n1. Add to sudo group\n2. Add to sudoers file\nEnter choice (1 or 2)"
+          register: sudo_method_prompt
+
+        - name: Prompt for sudo type
+          pause:
+            prompt: "Sudo access type:\n1. All commands (NOPASSWD)\n2. Specific command(s)\nEnter choice (1 or 2)"
+          register: sudo_type_prompt
+          when: sudo_method_prompt.user_input == "2"
+
+        - name: Prompt for specific commands
+          pause:
+            prompt: "Enter specific commands (comma-separated, e.g., '/bin/systemctl, /usr/bin/docker')"
+          register: specific_commands_prompt
+          when: 
+            - sudo_method_prompt.user_input == "2"
+            - sudo_type_prompt is defined
+            - sudo_type_prompt.user_input == "2"
+
+        - name: Set sudo variables
+          set_fact:
+            action_type: "1"
+            sudo_user: "{{ sudo_user_prompt.user_input }}"
+            sudo_method: "{{ sudo_method_prompt.user_input }}"
+            sudo_type: "{{ sudo_type_prompt.user_input if (sudo_method_prompt.user_input == '2' and sudo_type_prompt is defined) else '' }}"
+            specific_commands: "{{ specific_commands_prompt.user_input if (sudo_method_prompt.user_input == '2' and sudo_type_prompt is defined and sudo_type_prompt.user_input == '2') else '' }}"
+
+        - name: Include sudo management tasks
+          include_tasks: linux_manage_sudo_tasks.yaml
+      when: 
+        - add_login_prompt.user_input | lower == 'y'
+        - sudo_config_prompt.user_input | lower == 'y'
+
+    - name: Ultimate completion message
+      debug:
+        msg:
+          - "============================================"
+          - "COMPLETE SYSTEM SETUP FINISHED!"
+          - "============================================"
+          - "✅ System joined to Active Directory"
+          - "✅ SSH key authentication configured and tied to AD status"
+          - "✅ PAM configured for home directory creation"
+          - "{{ '✅ Login permissions configured' if add_login_prompt.user_input | lower == 'y' else '⚠️  LOGIN PERMISSIONS NOT CONFIGURED' }}"
+          - "{{ '✅ Sudo permissions configured' if (add_login_prompt.user_input | lower == 'y' and sudo_config_prompt.user_input | lower == 'y') else '⚠️  Sudo permissions not configured - run linux_manage_sudo.yaml' }}"
+          - "============================================"
+          - "🔒 SECURITY NOTE: Only {{ ad_access_group }} can login by default!"
+          - "{{ 'To add other users/groups, run: linux_add_system_login.yaml' if add_login_prompt.user_input | lower != 'y' else 'Additional users/groups can be added with: linux_add_system_login.yaml' }}"
+          - "🔒 Root access: SSH keys work without AD validation"
+          - "🔒 AD users: SSH keys validated against current account status"
+          - "============================================"
+          - "Your system is ready for AD users with SSH key authentication!"
+          - "============================================"

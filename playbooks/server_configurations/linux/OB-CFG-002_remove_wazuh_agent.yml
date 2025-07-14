@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Playbook ID: OB-CFG-002
+---
+- name: Remove Wazuh Agent from Linux
+  hosts: "{{ target_hosts }}"
+  gather_facts: yes
+  become: yes
+  vars:
+    wazuh_install_dir: /var/ossec
+
+  tasks:
+    - name: Stop and disable Wazuh agent service
+      ansible.builtin.systemd:
+        name: wazuh-agent
+        state: stopped
+        enabled: no
+      ignore_errors: yes
+
+    - name: Remove Wazuh agent package (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name: wazuh-agent
+        state: absent
+        purge: yes
+      when: ansible_os_family == "Debian"
+      register: apt_remove_result
+
+    - name: Remove Wazuh agent package (RedHat/CentOS/Fedora)
+      ansible.builtin.yum:
+        name: wazuh-agent
+        state: absent
+      when: ansible_os_family == "RedHat"
+      register: yum_remove_result
+
+    - name: Remove Wazuh agent package (SLES/openSUSE)
+      ansible.builtin.zypper:
+        name: wazuh-agent
+        state: absent
+      when: ansible_os_family == "Suse"
+      register: zypper_remove_result
+
+    - name: Ensure Wazuh agent installation directory is removed (purge)
+      ansible.builtin.file:
+        path: "{{ wazuh_install_dir }}"
+        state: absent
+      register: dir_remove_result
+
+    - name: Display completion message
+      debug:
+        msg: "Wazuh agent removal completed and configuration purged."
+      when: >
+        apt_remove_result.changed | default(false) or
+        yum_remove_result.changed | default(false) or
+        zypper_remove_result.changed | default(false) or
+        dir_remove_result.changed | default(false)
+
+    - name: Display message if agent was not found or already removed
+      debug:
+        msg: "Wazuh agent was not found or already removed."
+      when: not (
+        apt_remove_result.changed | default(false) or
+        yum_remove_result.changed | default(false) or
+        zypper_remove_result.changed | default(false) or
+        dir_remove_result.changed | default(false)
+        ) 
