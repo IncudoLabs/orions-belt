@@ -1,0 +1,46 @@
+{# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Template ID: OB-006-T
+# Used by: OB-006
+#}
+#
+# This file is part of the PAM configuration. It handles the primary
+# PAM common-auth configuration template
+# This template is used by OB-006 (configure_pam.yml) #}
+
+# Authentication stack - NO nullok to prevent blank passwords
+auth    [success=1 default=ignore]      pam_unix.so
+auth    requisite                       pam_deny.so
+auth    required                        pam_permit.so
+
+{% if pam_tally2_available.stat.exists %}
+# Account lockout protection
+auth    required                        pam_tally2.so deny={{ pam_account_lockout_attempts }} unlock_time={{ pam_account_lockout_time }} reset
+{% endif %}
+
+# Additional security modules
+auth    optional                        pam_cap.so
+auth    optional                        pam_ldap.so
+auth    optional                        pam_krb5.so
+auth    optional                        pam_sss.so
+auth    optional                        pam_winbind.so 

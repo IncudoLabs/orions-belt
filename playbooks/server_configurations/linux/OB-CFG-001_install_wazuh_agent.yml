@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Playbook ID: OB-CFG-001
+---
+- name: Install Wazuh Agent on Linux
+  hosts: "{{ target_hosts }}"
+  gather_facts: yes
+  become: yes
+
+  vars_files:
+    - ../../../config/config-production.yml
+
+  vars_prompt:
+    - name: wazuh_registration_password
+      prompt: "Enter the Wazuh registration password"
+      private: yes
+
+  vars:
+    wazuh_agent_version: "4.12.0-1"
+    wazuh_agent_deb_url: "https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_{{ wazuh_agent_version }}_amd64.deb"
+    wazuh_agent_deb_path: "/tmp/wazuh-agent-{{ wazuh_agent_version }}.deb"
+    wazuh_install_dir: /var/ossec
+
+  tasks:
+    - name: Check if Wazuh agent is already installed
+      ansible.builtin.stat:
+        path: "{{ wazuh_install_dir }}/etc/ossec.conf"
+      register: wazuh_installed
+
+    - name: Fail if Wazuh is already installed
+      ansible.builtin.fail:
+        msg: "Wazuh agent is already installed. Please use the removal playbook first if you want to reinstall."
+      when: wazuh_installed.stat.exists
+
+    # Debian Family Installation
+    - name: Install Wazuh Agent on Debian/Ubuntu
+      when: ansible_os_family == "Debian" and not wazuh_installed.stat.exists
+      block:
+        - name: Download Wazuh agent .deb package
+          ansible.builtin.get_url:
+            url: "{{ wazuh_agent_deb_url }}"
+            dest: "{{ wazuh_agent_deb_path }}"
+            mode: '0644'
+
+        - name: Install Wazuh agent .deb package with password
+          ansible.builtin.shell:
+            cmd: >
+              WAZUH_MANAGER='{{ wazuh.agent.manager_host }}'
+              WAZUH_REGISTRATION_PASSWORD='{{ wazuh_registration_password }}'
+              dpkg -i {{ wazuh_agent_deb_path }}
+
+    # RedHat Family Installation
+    - name: Install Wazuh Agent on RedHat/CentOS/Fedora
+      when: ansible_os_family == "RedHat" and not wazuh_installed.stat.exists
+      block:
+        - name: Add Wazuh YUM repository
+          ansible.builtin.yum_repository:
+            name: wazuh
+            description: Wazuh repository
+            baseurl: https://packages.wazuh.com/4.x/yum/
+            gpgcheck: yes
+            gpgkey: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+            enabled: yes
+
+        - name: Install Wazuh agent package with password
+          ansible.builtin.shell:
+            cmd: >
+              WAZUH_MANAGER='{{ wazuh.agent.manager_host }}'
+              WAZUH_REGISTRATION_PASSWORD='{{ wazuh_registration_password }}'
+              yum -y install wazuh-agent
+
+    - name: Enable and start Wazuh agent service
+      ansible.builtin.systemd:
+        name: wazuh-agent
+        state: started
+        enabled: yes
+      when: not wazuh_installed.stat.exists 

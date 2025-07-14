@@ -107,70 +107,70 @@
 
     - name: Create secure PAM common-auth configuration
       template:
-        src: common-auth.j2
+        src: OB-006-T_common-auth.j2
         dest: /etc/pam.d/common-auth
         mode: '0644'
         backup: yes
 
     - name: Create secure PAM common-account configuration
       template:
-        src: common-account.j2
+        src: OB-006-T_common-account.j2
         dest: /etc/pam.d/common-account
         mode: '0644'
         backup: yes
 
     - name: Create secure PAM common-password configuration
       template:
-        src: common-password.j2
+        src: OB-006-T_common-password.j2
         dest: /etc/pam.d/common-password
         mode: '0644'
         backup: yes
 
     - name: Create secure PAM common-session configuration
       template:
-        src: common-session.j2
+        src: OB-006-T_common-session.j2
         dest: /etc/pam.d/common-session
         mode: '0644'
         backup: yes
 
     - name: Create secure PAM login configuration
       template:
-        src: login.j2
+        src: OB-006-T_login.j2
         dest: /etc/pam.d/login
         mode: '0644'
         backup: yes
 
     - name: Create secure PAM SSH configuration
       template:
-        src: sshd.j2
+        src: OB-006-T_sshd.j2
         dest: /etc/pam.d/sshd
         mode: '0644'
         backup: yes
 
     - name: Create secure PAM passwd configuration
       template:
-        src: passwd.j2
+        src: OB-006-T_passwd.j2
         dest: /etc/pam.d/passwd
         mode: '0644'
         backup: yes
 
     - name: Configure password quality settings
       template:
-        src: pwquality.conf.j2
+        src: OB-006-T_pwquality.conf.j2
         dest: /etc/security/pwquality.conf
         mode: '0644'
         backup: yes
 
     - name: Configure login access control
       template:
-        src: access.conf.j2
+        src: OB-006-T_access.conf.j2
         dest: /etc/security/access.conf
         mode: '0644'
         backup: yes
 
     - name: Configure login time restrictions
       template:
-        src: time.conf.j2
+        src: OB-006-T_time.conf.j2
         dest: /etc/security/time.conf
         mode: '0644'
         backup: yes
