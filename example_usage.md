@@ -79,7 +79,40 @@ security_hardening:
     rate_limit_ssh: false     # No rate limiting in development
 ```
 
-### 3. Using Configuration in Playbooks
+### 3. Using the `ansible_ip` Custom Inventory Variable
+
+To provide greater flexibility, especially when DNS may not be reliable or when you need to target a specific IP, the `run_playbooks.sh` script supports a custom `ansible_ip` variable in the inventory file.
+
+**How it Works:**
+
+When you provide an IP address as a target in the runner script, it will scan the inventory file to find which host block that IP belongs to. This allows you to target a machine by its IP address while still letting Ansible use the host's name for connection and logging.
+
+**Example Inventory (`inventory/hosts-development`):**
+
+```yaml
+webserver01:
+  ansible_host: 192.168.1.10
+
+dbserver01:
+  ansible_host: db.dev.local
+  ansible_ip: 192.168.1.11 # Custom variable for IP lookup
+```
+
+**Example Usage in `run_playbooks.sh`:**
+
+1.  Start the runner: `./run_playbooks.sh`
+2.  Choose a playbook to run.
+3.  When prompted for the target host, enter the IP address: `192.168.1.11`
+
+**Result:**
+
+The script will detect that `192.168.1.11` is an IP address, search the inventory, and find that it belongs to the `dbserver01` host entry. It will then execute the playbook against `dbserver01`, allowing Ansible to connect using the `ansible_host` value (`db.dev.local`).
+
+This is useful for:
+-   Targeting hosts that have been provisioned but whose DNS records have not yet propagated.
+-   Ensuring you are acting on the correct machine in environments with complex network configurations.
+
+### 4. Using Configuration in Playbooks
 
 #### Method 1: Direct Variable Reference
 ```yaml
@@ -130,7 +163,7 @@ security_hardening:
           default_group: "{{ wazuh.agent.default_group }}"
 ```
 
-### 4. Environment-Specific Behavior
+### 5. Environment-Specific Behavior
 
 #### Production Environment
 - **Security**: Maximum security settings
@@ -153,7 +186,7 @@ security_hardening:
 - **Updates**: Daily auto-updates
 - **Logging**: Minimal retention (30 days)
 
-### 5. Testing Configuration
+### 6. Testing Configuration
 
 ```bash
 # Test current configuration
@@ -166,7 +199,7 @@ security_hardening:
 # ✓ vault.yml (if exists)
 ```
 
-### 6. Adding New Configuration Variables
+### 7. Adding New Configuration Variables
 
 #### Step 1: Add to Base Config
 ```yaml

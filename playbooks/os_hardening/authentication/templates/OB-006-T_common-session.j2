@@ -1,0 +1,55 @@
+{# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Template ID: OB-006-T
+# Used by: OB-006
+#}
+#
+# This file is part of the PAM configuration, and it is used to
+# configure actions that should be taken at the beginning and end
+# of a user session.
+#
+# The PAM module 'common-session' is responsible for managing
+# session-related configurations and security measures.
+#
+# This template is used by the Ansible Security Hardening Playbook
+# (configure_pam.yml) to define the PAM common-session module's
+# behavior and settings.
+#
+# Session management
+session [default=1]                     pam_permit.so
+
+# Session limits
+session requisite                       pam_deny.so
+session required                        pam_permit.so
+
+{% if pam_time_available.stat.exists %}
+# Session timeout
+session optional                        pam_time.so
+{% endif %}
+
+# Session logging
+session required                        pam_unix.so
+
+# Session limits and security
+session required                        pam_limits.so
+session optional                        pam_systemd.so 

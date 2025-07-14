@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Playbook ID: OB-CFG-007
+---
+- name: Install Windows Updates and Reboot Intelligently
+  hosts: "{{ target_hosts }}"
+  gather_facts: no
+
+  tasks:
+    - name: Check for pending Windows updates
+      ansible.windows.win_updates:
+        category_names: '*'
+        state: searched
+      register: update_check
+
+    - name: Display pending updates
+      debug:
+        msg: "Found {{ update_check.found_update_count }} updates to install: {{ update_check.updates.keys() | list }}"
+      when: update_check.found_update_count > 0
+
+    - name: Display message if no updates are found
+      debug:
+        msg: "No pending Windows updates found."
+      when: update_check.found_update_count == 0
+
+    - name: Install all pending Windows updates
+      ansible.windows.win_updates:
+        category_names: '*'
+        state: installed
+      register: update_install
+      when: update_check.found_update_count > 0
+
+    - name: Reboot server if required by updates
+      when: update_install.reboot_required | default(false)
+      block:
+        - name: Display reboot message
+          debug:
+            msg: "Updates have been installed which require a reboot. Rebooting server now... This may take a few minutes."
+
+        - name: Reboot the server and wait for it to come back online
+          ansible.windows.win_reboot:
+            reboot_timeout: 3600
+
+    - name: Display message if reboot was not required
+      debug:
+        msg: "Updates installed successfully. No reboot was required."
+      when:
+        - update_install.changed
+        - not (update_install.reboot_required | default(false)) 
