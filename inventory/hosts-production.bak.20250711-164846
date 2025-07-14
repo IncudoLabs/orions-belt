@@ -1,0 +1,632 @@
+linux:
+ children:
+   sarunac: 
+   sarunacDemo:
+   webservers:
+   mysql:
+   dns:
+   debian:
+   ubuntu2204:
+   ubuntu2004:
+   amazonLinux:
+   centos:
+
+ vars:
+  ansible_user=marko
+
+ubuntu:
+ children:
+  ubuntu2404:
+  ubuntu2204:
+  ubuntu2004:
+
+ubuntu2404:
+ hosts:
+  vonvault:
+   ansible_host: 10.76.0.5
+   description: "VON Vault Server"
+
+ubuntu2204:
+ hosts:
+  cloud-von:
+   ansible_host: 10.10.0.101
+   description: "Cloud VON Server"
+  cloud-qw:
+   ansible_host: 10.10.0.102
+   description: "Cloud QW Server"
+
+ubuntu2004:
+ hosts:
+  cloud-miim:
+   ansible_host: 10.10.0.103
+   description: "Cloud MiiM Server"
+
+sarunac:
+ hosts:
+  saruweb:
+   ansible_host: 10.10.0.13
+   description: "Sarunac Web Server"
+  matrix:
+   ansible_host: 10.10.0.23
+   description: "Matrix Server"
+
+sarunacDemo:
+ hosts:
+  ncdemo:
+   ansible_host: 10.10.0.59
+   description: "NC Demo Server"
+
+webservers:
+ hosts:
+  webserver1:
+   ansible_host: 10.10.0.25
+   description: "Main Web Server"
+
+mysql:
+ hosts:
+  mysql-centos7:
+   ansible_host: 192.168.0.16
+   description: "MySQL Original CentOS 7"
+  von-mysql:
+   ansible_host: 10.100.0.60
+   description: "VON MySQL Server"
+
+dns:
+ children:
+  dnsDebian:
+  dnsCentos8:
+
+dnsCentos8:
+ hosts:
+  dns-centos8:
+   ansible_host: 192.168.0.5
+   description: "DNS Server CentOS 8"
+
+dnsDebian:
+ hosts:
+  # Add Debian DNS servers here if any
+
+debian:
+ children:
+  debian10:
+  debian11:
+  debian12:
+
+debian10:
+ hosts:
+  svnsrv21:
+   ansible_host: SvnSrv21.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.58
+   description: "SVN Server 21"
+
+debian11:
+ children:
+  superset:
+ hosts:
+  snipeit:
+   ansible_host: SnipIt.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.16
+   description: "SnipeIT Asset Management"
+  obelisk3:
+   ansible_host: obelisk3.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.25
+   description: "Obelisk 3 Server"
+
+superset:
+ hosts:
+  superset-prod-new:
+   ansible_host: superset.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.17
+   description: "Superset Production New"
+  superset-staging:
+   ansible_host: superset-stg.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.18
+   description: "Superset Staging"
+  superset-prod:
+   ansible_host: ExchSrv25.vancouveronthenet.com
+   ansible_ip: 10.100.0.19
+   description: "Superset Production"
+
+debian12:
+ hosts:
+  AnsiDev:
+   ansible_host: 10.40.0.20
+   description: "Ansible Development Server"
+  debhardtest:
+   ansible_host: 10.100.0.251
+   description: "debhardtest"
+  debian12-server1:
+   ansible_host: 10.10.0.5
+   description: "Debian 12 Server 1"
+  debian12-server2:
+   ansible_host: 10.10.0.10
+   description: "Debian 12 Server 2"
+  debian12-server3:
+   ansible_host: 10.10.0.13
+   description: "Debian 12 Server 3"
+  master:
+   ansible_host: 10.10.0.15
+   description: "Master DNS Server"
+  rproxy:
+   ansible_host: 10.10.0.20
+   description: "Reverse proxy for SAP B1"
+  debian12-server6:
+   ansible_host: 10.10.0.23
+   description: "Debian 12 Server 6"
+  debian12-server7:
+   ansible_host: moodle.qualityhort.com
+   ansible_ip: 10.100.0.33
+   description: "Moodle"
+  debian12-server8:
+   ansible_host: helpdesk.qualityhort.com
+   ansible_ip: 10.100.0.39
+   description: "Debian 12 Server 8"
+  von-mysql-debian12:
+   ansible_host: 10.100.0.60
+   description: "VON MySQL on Debian 12"
+  debian12-server9:
+   ansible_host: AnsibleMaster.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.61
+   description: "Debian 12 Server 9"
+  gitlab:
+   ansible_host: gitlab.vancouveronthenet.com
+   ansible_ip: 10.100.0.62
+   description: "GitLab Server"
+  openproject:
+   ansible_host: op.qualityhort.com
+   ansible_ip: 10.100.0.67
+   description: "Debian 12 Server 10"
+  portal:
+   ansible_host: portal.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.68
+   description: "Portal Server"
+  debian12-server11:
+   ansible_host: docs.qualityhort.com
+   ansible_ip: 10.100.0.69
+   description: "Debian 12 Server 11"
+  dns-debian12:
+   ansible_host: 192.168.0.5
+   description: "DNS Server on Debian 12"
+
+amazonLinux:
+ hosts:
+  wazuh:
+   ansible_host: 10.100.0.44
+   description: "Wazuh Security Platform"
+
+centos:
+ children:
+  centos7:
+  centos8:
+
+centos7:
+ hosts:
+  centos7-server:
+   ansible_host: 192.168.0.95
+   description: "CentOS 7 Server"
+
+centos8:
+ hosts:
+  centos8-server:
+   ansible_host: 10.70.0.30
+   description: "CentOS 8 Server"
+
+# VON Domain Infrastructure
+vonRds:
+ hosts:
+  rds1:
+   ansible_host: rds1.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.31
+   description: "RDS Server 1"
+  rds6:
+   ansible_host: rds6.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.36
+   description: "RDS Server 6"
+  rds9:
+   ansible_host: rds9.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.35
+   description: "RDS Server 9"
+
+vonADControllers:
+ hosts:
+  dc01:
+   ansible_host: dc01.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.10
+   description: "Primary Domain Controller"
+  dc02:
+   ansible_host: dc02.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.5
+   description: "Secondary Domain Controller"
+
+vonExchangeServers:
+ hosts:
+  exchsrva:
+   ansible_host: exchsrva.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.20
+   description: "Exchange Server A"
+  exchsrvb:
+   ansible_host: exchsrvb.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.21
+   description: "Exchange Server B"
+  exchsrv25:
+   ansible_host: exchsrv25.vancouveronthenet.com
+   ansible_ip: 10.100.0.19
+   description: "Exchange Server 2025"
+
+vonDomainServers:
+ hosts:
+  ca:
+   ansible_host: ca.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.11
+   description: "Certificate Authority"
+  fs01:
+   ansible_host: fs01.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.15
+   description: "File Server 01"
+  fedsrv1:
+   ansible_host: fedsrv1.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.43
+   description: "Federation Server 1"
+  ups-qh:
+   ansible_host: upssrv2.qualityhort.com
+   ansible_ip: 10.100.0.27
+   description: "UPS Server Quality Hort"
+  upssrv:
+   ansible_host: upssrv.corp.vancouveronthenet.com
+   ansible_ip: 10.100.0.28
+   description: "UPS Server VON"
+  wsus:
+   ansible_host: wsus.vancouveronthenet.com
+   description: "WSUS Update Server"
+
+vonSqlServers:
+ hosts:
+  sql-server-2019:
+   ansible_host: sqlsrv19corp.vancouveronthenet.com
+   description: "SQL Server 2019"
+
+vonWindows:
+ children:
+  vonExchangeServers:
+  vonDomainServers:
+  vonADControllers:
+  vonUPS:
+  vonRds:
+  vonLaptops:
+  vonDesktops:
+ vars:
+  ansible_connection: winrm
+  ansible_user: administrator@CORP.VANCOUVERONTHENET.COM
+  ansible_password: 
+  ansible_port: 5986
+  ansible_winrm_transport: kerberos
+  ansible_winrm_server_cert_validation: ignore
+
+vonLaptops:
+ hosts:
+  steve-laptop:
+   ansible_host: stevep1.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.86
+   description: "Steve's Laptop"
+  marko-laptop:
+   ansible_host: markop1.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.19
+   description: "Marko's Laptop"
+  laptop-1701:
+   ansible_host: L1701.corp.vancouveronthenet.com
+   ansible_ip: 10.81.234.2
+   description: "Laptop L1701"
+  laptop-1703:
+   ansible_host: L1703.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.47
+   description: "Laptop L1703"
+  laptop-2001:
+   ansible_host: L2001.corp.vancouveronthenet.com
+   ansible_ip: 172.16.10.104
+   description: "Laptop L2001"
+  laptop-2002:
+   ansible_host: "l2002.corp.vancouveronthenet.com"
+   description: "Laptop L2002"
+  laptop-202001:
+   ansible_host: L202001.corp.vancouveronthenet.com
+   ansible_ip: 10.81.234.3
+   description: "Laptop L202001"
+  laptop-2201:
+   ansible_host: L2201.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.70
+   description: "Laptop L2201"
+  laptop-2202:
+   ansible_host: L2202.corp.vancouveronthenet.com
+   ansible_ip: 10.8.0.22
+   description: "Laptop L2202"
+  laptop-2203:
+   ansible_host: L2203.corp.vancouveronthetnet.com
+   description: "Laptop L2203"
+  laptop-2204:
+   ansible_host: L2204.corp.vancouveronthetnet.com
+   description: "Laptop L2204"
+  laptop-2205:
+   ansible_host: L2205.corp.vancouveronthenet.com
+   ansible_ip: 10.81.234.2
+   description: "Laptop L2205"
+  laptop-2206:
+   ansible_host: L2206.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.73
+   description: "Laptop L2206"
+  laptop-2207:
+   ansible_host: L2207.corp.vancouveronthenet.com
+   ansible_ip: 10.8.0.33
+   description: "Laptop L2207"
+  laptop-2208:
+   ansible_host: L2208.corp.vancouveronthenet.com
+   ansible_ip: 10.81.234.4
+   description: "Laptop L2208"
+  laptop-2301:
+   ansible_host: L2301.corp.vancouveronthenet.com
+   ansible_ip: 10.8.0.31
+   description: "Laptop L2301"
+  laptop-2302:
+   ansible_host: L2302.corp.vancouveronthenet.com
+   ansible_ip: 10.81.234.3
+   description: "Laptop L2302"
+  laptop-2303:
+   ansible_host: L2303.corp.vancouveronthenet.com
+   ansible_ip: 10.81.234.4
+   description: "Laptop L2303"
+  laptop-2304:
+   ansible_host: L2304.corp.vancouveronthenet.com
+   ansible_ip: 10.81.234.68
+   description: "Laptop L2304"
+  laptop-2305:
+   ansible_host: L2305.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.12
+   description: "Laptop L2305"
+  test-laptop-1702:
+   ansible_host: t1702.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.85
+   description: "Test Laptop T1702"
+
+vonDesktops:
+ hosts:
+  desktop-1301:
+   ansible_host: D1301.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.76
+   description: "Desktop D1301"
+  desktop-1302:
+   ansible_host: D1302.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.56
+   description: "Desktop D1302"
+  desktop-1303:
+   ansible_host: D1303.corp.vancouveronthenet.com
+   ansible_ip: 192.168.10.178
+   description: "Desktop D1303"
+  desktop-1304:
+   ansible_host: D1304.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.48
+   description: "Desktop D1304"
+  desktop-1305:
+   ansible_host: D1305.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.76
+   description: "Desktop D1305"
+  desktop-1310:
+   ansible_host: D1310.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.92
+   description: "Desktop D1310"
+  test-desktop-1701:
+   ansible_host: t1701.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.26
+   description: "Test Desktop T1701"
+  test-desktop-1702:
+   ansible_host: t1702.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.85
+   description: "Test Desktop T1702"
+  test-desktop-1703:
+   ansible_host: t1703.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.71
+   description: "Test Desktop T1703"
+  test-desktop-1704:
+   ansible_host: t1704.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.45
+   description: "Test Desktop T1704"
+  test-desktop-1705:
+   ansible_host: t1705.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.97
+   description: "Test Desktop T1705"
+  test-desktop-1706:
+   ansible_host: t1706.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.81
+   description: "Test Desktop T1706"
+  test-desktop-1707:
+   ansible_host: t1707.corp.vancouveronthenet.com
+   description: "Test Desktop T1707"
+  test-desktop-1708:
+   ansible_host: t1708.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.60
+   description: "Test Desktop T1708"
+  test-desktop-1709:
+   ansible_host: t1709.corp.vancouveronthenet.com
+   description: "Test Desktop T1709"
+  test-desktop-1710:
+   ansible_host: t1710.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.88
+   description: "Test Desktop T1710"
+  test-desktop-1711:
+   ansible_host: t1711.corp.vancouveronthenet.com
+   ansible_ip: 10.100.100.93
+   description: "Test Desktop T1711"
+
+# QW Domain Infrastructure
+qwWinServer2016:
+ hosts:
+  qwts4:
+   ansible_host: qwts4.qwdom.van
+   ansible_ip: 10.110.0.24
+   description: "QW Terminal Server 4"
+  qw-ca:
+   ansible_host: ca.qwdom.van
+   ansible_ip: 10.110.0.19
+   description: "QW Certificate Authority"
+  sqlsrv19-qw:
+   ansible_host: sqlsrv19.qwdom.van
+   ansible_ip: 10.110.0.20
+   description: "QW SQL Server 2019"
+  qw-accpac-dev:
+   ansible_host: accpacdev2021.qwdom.van
+   ansible_ip: 10.110.1.16
+   description: "QW AccPac Development 2021"
+  qw-crm:
+   ansible_host: crm.qwdom.van
+   ansible_ip: 10.110.0.25
+   description: "QW CRM Server"
+  qw-reports:
+   ansible_host: rpt1.qualitywholesale.ca
+   ansible_ip: 10.110.0.14
+   description: "QW Reports Server 1"
+
+qwADControllers:
+ hosts:
+  qw-dc-primary:
+   ansible_host: dc-2016-a.qwdom.van
+   ansible_ip: 10.110.0.22
+   description: "QW Primary Domain Controller"
+  qw-cortex:
+   ansible_host: cortex.qwdom.van
+   ansible_ip: 10.110.0.5
+   description: "QW Cortex Server"
+
+qwWindows: 
+ children:
+  qwWinServer2016:
+  qwADControllers:
+ vars:
+  ansible_connection: winrm
+  ansible_user: administrator@QWDOM.VAN
+  ansible_password: 
+  ansible_port: 5986
+  ansible_winrm_transport: kerberos
+  ansible_winrm_server_cert_validation: ignore
+
+# Convenience groups for common operations
+windows_servers:
+  children:
+    vonWindows:
+    qwWindows:
+
+all_servers:
+ children:
+  linux:
+  windows_servers:
+
+production_servers:
+ hosts:
+  vonvault:
+  cloud-von:
+  gitlab:
+  portal:
+  wazuh:
+  mysql-centos7:
+  von-mysql:
+
+development_servers:
+ hosts:
+  cloud-miim:
+  ncdemo:
+  superset-staging:
+  qw-accpac-dev:
+
+web_servers:
+ hosts:
+  saruweb:
+  webserver1:
+  portal:
+
+database_servers:
+ hosts:
+  mysql-centos7:
+  von-mysql:
+  qw-sql-server:
+  sql-server-2019:
+
+misc:
+  hosts:
+    intraDev:
+      ansible_host: intraDev.qualityhort.com
+      ansible_ip: 10.100.0.22
+      description: "intraDev.qualityhort.com"
+    intra:
+      ansible_host: intra.qualityhort.com
+      ansible_ip: 10.100.0.23
+      description: "intra.qualityhort.com"
+    anubis:
+      ansible_host: anubis.corp.vancouveronthenet.com
+      ansible_ip: 10.100.0.40
+      description: "anubis.corp.vancouveronthenet.com"
+    sapapp02:
+      ansible_host: sapapp02.corp.vancouveronthenet.com
+      ansible_ip: 10.100.0.53
+      description: "sapapp02.corp.vancouveronthenet.com"
+    saprds01:
+      ansible_host: saprds01.corp.vancouveronthenet.com
+      ansible_ip: 10.100.0.55
+      description: "saprds01.corp.vancouveronthenet.com"
+    misc-ip-10-100-100-1:
+      ansible_host: 10.100.100.1
+    misc-ip-10-100-100-12:
+      ansible_host: 10.100.100.12
+    misc-ip-10-100-100-19:
+      ansible_host: 10.100.100.19
+    misc-ip-10-100-100-26:
+      ansible_host: 10.100.100.26
+    misc-ip-10-100-100-43:
+      ansible_host: 10.100.100.43
+    misc-ip-10-100-100-44:
+      ansible_host: 10.100.100.44
+    misc-ip-10-100-100-45:
+      ansible_host: 10.100.100.45
+    misc-ip-10-100-100-47:
+      ansible_host: 10.100.100.47
+    misc-ip-10-100-100-50:
+      ansible_host: 10.100.100.50
+    misc-ip-10-100-100-53:
+      ansible_host: 10.100.100.53
+    misc-ip-10-100-100-54:
+      ansible_host: 10.100.100.54
+    misc-ip-10-100-100-55:
+      ansible_host: 10.100.100.55
+    misc-ip-10-100-100-59:
+      ansible_host: 10.100.100.59
+    misc-ip-10-100-100-60:
+      ansible_host: 10.100.100.60
+    misc-ip-10-100-100-73:
+      ansible_host: 10.100.100.73
+    misc-ip-10-100-100-74:
+      ansible_host: 10.100.100.74
+    misc-ip-10-100-100-75:
+      ansible_host: 10.100.100.75
+    misc-ip-10-100-100-76:
+      ansible_host: 10.100.100.76
+    misc-ip-10-100-100-77:
+      ansible_host: 10.100.100.77
+    misc-ip-10-100-100-80:
+      ansible_host: 10.100.100.80
+    misc-ip-10-100-100-81:
+      ansible_host: 10.100.100.81
+    misc-ip-10-100-100-85:
+      ansible_host: 10.100.100.85
+    misc-ip-10-100-100-88:
+      ansible_host: 10.100.100.88
+    misc-ip-10-100-100-89:
+      ansible_host: 10.100.100.89
+    misc-ip-10-100-100-92:
+      ansible_host: 10.100.100.92
+
+infra-lan:
+  hosts:
+    misc-ip-192-168-10-141:
+      ansible_host: 192.168.10.141
+    misc-ip-192-168-20-106:
+      ansible_host: 192.168.20.106
+    misc-ip-192-168-30-101:
+      ansible_host: 192.168.30.101
+
+
