@@ -9,6 +9,14 @@
 
 Orion's Belt is an open-source collection of metadata-driven Ansible playbooks designed to automate system hardening and security compliance. Our goal is to provide a robust, community-vetted library of scripts mapped to established cybersecurity benchmarks like CIS, NIST CSF, and ISO 27001.
 
+## Table of Contents
+
+- [Our Approach](#our-approach)
+- [Key Features](#key-features)
+- [Getting Started](#getting-started)
+- [How to Contribute](#how-to-contribute)
+- [License](#license)
+
 ## Our Approach
 
 While many configuration scripts exist, creating a truly robust, reliable, and adaptable hardening solution presents significant technical challenges. Standard approaches often result in brittle, platform-specific scripts that are difficult to maintain and verify. Our work on Orion's Belt is focused on overcoming these systemic issues through three key areas of investigation:
@@ -23,11 +31,11 @@ Our development is continuously guided by these core research principles.
 
 ## Key Features
 
-*   **Framework-Aligned:** Each playbook is mapped to specific controls from well-known security frameworks, providing clear context for compliance.
-*   **Metadata-Driven:** Scripts are self-documenting, with rich metadata defining their purpose, target systems, and version.
-*   **Community-Vetted:** We use a transparent, multi-stage review process via our `contrib` branch to ensure high-quality contributions.
-*   **Enterprise-Ready:** Contributions undergo a rigorous internal testing and enrichment pipeline to ensure they are robust and secure for enterprise use.
-*   **Extensible by Design:** The project is structured to support hardening across different operating systems, network devices, and cloud environments.
+- **Framework-Aligned:** Each playbook is mapped to specific controls from well-known security frameworks, providing clear context for compliance.
+- **Metadata-Driven:** Scripts are self-documenting, with rich metadata defining their purpose, target systems, and version.
+- **Community-Vetted:** We use a transparent, multi-stage review process via our `contrib` branch to ensure high-quality contributions.
+- **Enterprise-Ready:** Contributions undergo a rigorous internal testing and enrichment pipeline to ensure they are robust and secure for enterprise use.
+- **Extensible by Design:** The project is structured to support hardening across different operating systems, network devices, and cloud environments.
 
 ## Getting Started
 
