@@ -6,12 +6,24 @@ vault.yml
 vault_password.txt
 
 # Environment-specific configurations (if they contain sensitive data)
+.env
+.env.local
 Custom/*
+
+# Ignore the private directory but allow the setup script and its README
 private/*
-inventory/hosts-development
-inventory/hosts-production
-config/config-development.yml
-config/config-production.yml
+!private/README.md
+!private/setup_env.sh
+# Ignore inventory/ and config/ directories but allow base and example files
+inventory/*
+!inventory/hosts
+!inventory/hosts.example
+config/*
+!config/config.yml
+!config/config-example.yml
+
+
+
 
 # Backup files
 *.backup
