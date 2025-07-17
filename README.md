@@ -30,6 +30,8 @@ While many configuration scripts exist, creating a truly robust, reliable, and a
 
 Our development is continuously guided by these core research principles.
 
+[Back to top](#table-of-contents)
+
 ## Key Features
 
 - **Framework-Aligned:** Each playbook is mapped to specific controls from well-known security frameworks, providing clear context for compliance.
@@ -37,6 +39,8 @@ Our development is continuously guided by these core research principles.
 - **Community-Vetted:** We use a transparent, multi-stage review process via our `contrib` branch to ensure high-quality contributions.
 - **Enterprise-Ready:** Contributions undergo a rigorous internal testing and enrichment pipeline to ensure they are robust and secure for enterprise use.
 - **Extensible by Design:** The project is structured to support hardening across different operating systems, network devices, and cloud environments.
+
+[Back to top](#table-of-contents)
 
 ## Getting Started
 
@@ -66,6 +70,8 @@ cp inventory/hosts-example inventory/hosts-development
 ./run_playbooks.sh development
 ```
 
+[Back to top](#table-of-contents)
+
 ## Private Configuration (Inventory, Config and Custom Playbooks)
 
 Orion's Belt is designed to work with a separate, private repository to manage your sensitive and environment-specific files, such as inventory hosts, custom playbooks, and configurations. This keeps your private data secure while allowing you to keep the main Orion's Belt codebase up to date.
@@ -73,6 +79,7 @@ Orion's Belt is designed to work with a separate, private repository to manage y
 For detailed instructions on how to set up your private repository and link it to your Orion's Belt installation, please see the guide here:
 - **[Private Asset Management Guide](private/README.md)**
 
+[Back to top](#table-of-contents)
 
 ## How to Contribute
 
@@ -80,6 +87,10 @@ We welcome contributions from the community! Our development model is centered a
 
 For detailed instructions on how to prepare your script, format your pull request, and navigate our review process, please read our **[CONTRIBUTING.md](CONTRIBUTING.md)** file.
 
+[Back to top](#table-of-contents)
+
 ## License
 
 This project is licensed under the GPLv3 License. See the [LICENSE](LICENSE) file for details.
+
+[Back to top](#table-of-contents)
