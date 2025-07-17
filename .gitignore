@@ -7,6 +7,7 @@ vault_password.txt
 
 # Environment-specific configurations (if they contain sensitive data)
 Custom/*
+private/*
 inventory/hosts-development
 inventory/hosts-production
 config/config-development.yml
