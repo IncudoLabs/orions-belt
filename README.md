@@ -15,6 +15,7 @@ Orion's Belt is an open-source collection of metadata-driven Ansible playbooks d
 - [Key Features](#key-features)
 - [Getting Started](#getting-started)
 - [How to Contribute](#how-to-contribute)
+- [Private Configuration](#private-configuration-inventory-config-and-custom-playbooks)
 - [License](#license)
 
 ## Our Approach
@@ -65,7 +66,7 @@ cp inventory/hosts-example inventory/hosts-development
 ./run_playbooks.sh development
 ```
 
-## Private Configuration (Inventory, Custom Playbooks)
+## Private Configuration (Inventory, Config and Custom Playbooks)
 
 Orion's Belt is designed to work with a separate, private repository to manage your sensitive and environment-specific files, such as inventory hosts, custom playbooks, and configurations. This keeps your private data secure while allowing you to keep the main Orion's Belt codebase up to date.
 
