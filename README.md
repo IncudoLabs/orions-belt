@@ -65,6 +65,14 @@ cp inventory/hosts-example inventory/hosts-development
 ./run_playbooks.sh development
 ```
 
+## Private Configuration (Inventory, Custom Playbooks)
+
+Orion's Belt is designed to work with a separate, private repository to manage your sensitive and environment-specific files, such as inventory hosts, custom playbooks, and configurations. This keeps your private data secure while allowing you to keep the main Orion's Belt codebase up to date.
+
+For detailed instructions on how to set up your private repository and link it to your Orion's Belt installation, please see the guide here:
+- **[Private Asset Management Guide](private/README.md)**
+
+
 ## How to Contribute
 
 We welcome contributions from the community! Our development model is centered around the `contrib` branch, where new ideas and scripts are submitted and reviewed.
