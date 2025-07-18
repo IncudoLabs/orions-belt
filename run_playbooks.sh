@@ -1,5 +1,5 @@
 #!/bin/bash
-
+#
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Copyright (c) 2023 - present Expiscor Group Inc.
@@ -22,6 +22,23 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
+
+#
+# Orion's Belt - Playbook Runner
+#
+# This script provides a user-friendly menu system to select and run Ansible
+# playbooks for system hardening and configuration.
+
+# --- Environment Setup ---
+# Load environment variables from .env file if it exists
+if [ -f .env ]; then
+  export $(grep -v '^#' .env | xargs)
+fi
+
+# --- Script Configuration ---
+# Set the root directory for playbooks
+PLAYBOOK_DIR="playbooks"
+
 
 # Colors for better output
 RED='\033[0;31m'
