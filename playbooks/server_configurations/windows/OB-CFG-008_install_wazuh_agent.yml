@@ -26,12 +26,27 @@
   hosts: "{{ target_hosts }}"
   gather_facts: no
 
-  vars_prompt:
-    - name: wazuh_registration_password
-      prompt: "Enter the Wazuh registration password"
-      private: yes
-
   pre_tasks:
+    - name: Set wazuh password from environment variable if available
+      ansible.builtin.set_fact:
+        wazuh_registration_password: "{{ lookup('env', 'WAZUH_REGISTRATION_PASSWORD') }}"
+      when: lookup('env', 'WAZUH_REGISTRATION_PASSWORD')
+      run_once: true
+
+    - name: Prompt for Wazuh registration password if not in environment
+      ansible.builtin.pause:
+        prompt: "Enter the Wazuh registration password"
+        echo: no
+      register: password_prompt_result
+      when: not lookup('env', 'WAZUH_REGISTRATION_PASSWORD')
+      run_once: true
+
+    - name: Set wazuh password from prompt
+      ansible.builtin.set_fact:
+        wazuh_registration_password: "{{ password_prompt_result.user_input }}"
+      when: not lookup('env', 'WAZUH_REGISTRATION_PASSWORD')
+      run_once: true
+
     - name: DEBUG - Show inventory directory path
       ansible.builtin.debug:
         var: inventory_dir
