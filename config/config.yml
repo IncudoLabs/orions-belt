@@ -121,7 +121,7 @@ wazuh:
   # Wazuh agent groups by environment
   groups:
     production:
-      - "production-servers"
+      - "servers"
       - "web-servers"
       - "database-servers"
     staging:
