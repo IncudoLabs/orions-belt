@@ -22,8 +22,10 @@ config/*
 !config/config.yml
 !config/config-example.yml
 
-
-
+# Ignore group_vars/ and host_vars/ entirely as they are symlinked from 
+# the private repo with the ./private/setup_env.sh script.
+group_vars/
+host_vars/
 
 # Backup files
 *.backup
@@ -85,6 +87,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 
 # Node modules (if any)
