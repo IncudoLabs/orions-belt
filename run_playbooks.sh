@@ -29,6 +29,55 @@
 # This script provides a user-friendly menu system to select and run Ansible
 # playbooks for system hardening and configuration.
 
+# --- Virtual Environment Setup ---
+VENV_DIR=".venv"
+VENV_PYTHON="$VENV_DIR/bin/python"
+
+setup_virtual_environment() {
+    # Check if the virtual environment directory exists
+    if [ ! -d "$VENV_DIR" ]; then
+        echo -e "${YELLOW}Python virtual environment not found. Setting it up now...${NC}"
+        
+        # Ensure python3-venv is installed on Debian-based systems
+        if command -v apt-get &> /dev/null; then
+            if ! dpkg -s python3-venv &> /dev/null; then
+                echo "Attempting to install python3-venv..."
+                sudo apt-get update
+                sudo apt-get install -y python3-venv
+                if [ $? -ne 0 ]; then
+                    echo -e "${RED}Failed to install python3-venv. Please install it manually and re-run this script.${NC}"
+                    exit 1
+                fi
+            fi
+        fi
+        
+        python3 -m venv "$VENV_DIR"
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Failed to create virtual environment. Please check your Python installation.${NC}"
+            exit 1
+        fi
+        
+        echo "Virtual environment created. Installing dependencies from requirements.txt..."
+        "$VENV_DIR/bin/pip" install -r requirements.txt
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Failed to install dependencies. Please check requirements.txt and your internet connection.${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}Virtual environment setup complete.${NC}"
+    else
+        # Always ensure dependencies are in sync on every run
+        # This is an idempotent action and will be fast if everything is up to date
+        "$VENV_DIR/bin/pip" install -r requirements.txt &>/dev/null
+    fi
+    
+    # Set the VENV_ANSIBLE path after ensuring the virtual environment exists
+    VENV_ANSIBLE="$(pwd)/$VENV_DIR/bin/ansible-playbook"
+}
+
+# Call the venv setup at the beginning of the script execution
+setup_virtual_environment
+
+
 # --- Environment Setup ---
 # Load environment variables from .env file if it exists
 if [ -f .env ]; then
@@ -70,7 +119,7 @@ if [[ "$ENVIRONMENT" != "production" && "$ENVIRONMENT" != "development" && "$ENV
 fi
 
 VAULT_PASSWORD_FILE=""
-USE_VAULT=false
+USE_VAULT=true
 clear
 # Function to display menu
 show_menu() {
@@ -117,7 +166,10 @@ configure_environment() {
     echo ""
     echo -e "${YELLOW}Current Settings:${NC}"
     echo "  Environment: $ENVIRONMENT"
-    echo "  Vault Password File: ${VAULT_PASSWORD_FILE:-"Not set"}"
+    echo "  Vault Usage: $([ "$USE_VAULT" = true ] && echo -e "${GREEN}Enabled${NC}" || echo -e "${YELLOW}Disabled${NC}")"
+    if [[ "$USE_VAULT" = true ]]; then
+        echo "  Vault Password File: ${VAULT_PASSWORD_FILE:-"Interactive Prompt"}"
+    fi
     if [[ "$KERBEROS_INITIALIZED" = true ]]; then
         echo "  Kerberos: ${GREEN}Initialized (${KERBEROS_PRINCIPAL})${NC}"
     else
@@ -146,13 +198,14 @@ configure_environment() {
     echo ""
     echo -e "${YELLOW}Available Options:${NC}"
     echo "1. Set Environment (development/staging/production)"
-    echo "2. Set Vault Password File"
-    echo "3. Test Configuration"
-    echo "4. Kerberos Authentication"
-    echo "5. Back to Main Menu"
+    echo "2. Toggle Vault Usage (On/Off)"
+    echo "3. Set Vault Password File"
+    echo "4. Test Configuration"
+    echo "5. Kerberos Authentication"
+    echo "6. Back to Main Menu"
     echo ""
     
-    read -p "Enter your choice (1-5): " config_choice
+    read -p "Enter your choice (1-6): " config_choice
     
     case $config_choice in
         1)
@@ -171,6 +224,15 @@ configure_environment() {
             echo -e "${GREEN}Environment set to: $ENVIRONMENT${NC}"
             ;;
         2)
+            if [[ "$USE_VAULT" = true ]]; then
+                USE_VAULT=false
+                echo -e "${YELLOW}Vault usage disabled.${NC}"
+            else
+                USE_VAULT=true
+                echo -e "${GREEN}Vault usage enabled.${NC}"
+            fi
+            ;;
+        3)
             read -p "Enter path to vault password file (or press Enter to use interactive): " vault_file
             if [[ -n "$vault_file" ]]; then
                 if [[ -f "$vault_file" ]]; then
@@ -186,13 +248,13 @@ configure_environment() {
                 echo -e "${GREEN}Will use interactive vault password prompt${NC}"
             fi
             ;;
-        3)
+        4)
             test_configuration
             ;;
-        4)
+        5)
             handle_kerberos_auth
             ;;
-        5)
+        6)
             return
             ;;
         *)
@@ -337,13 +399,91 @@ test_configuration() {
     fi
 }
 
+g_playbook_paths=()
+g_playbook_names=()
+
+# Function to find the most specific vault file for a host
+find_host_vault_file() {
+    local host_key="$1" # Assume this is always a valid hostname from inventory
+    local vault_pass_source="$2" # Can be a file path or the raw password
+    local hosts_file="inventory/hosts-$ENVIRONMENT"
+    if [[ ! -f "$hosts_file" ]]; then
+        hosts_file="hosts"
+    fi
+
+    # 1. Check for host-specific vault file
+    if [[ -f "host_vars/$host_key/vault.yml" ]]; then
+        echo "host_vars/$host_key/vault.yml"
+        return
+    fi
+
+    # 2. Check group_vars for the host's groups using a robust method
+    local groups
+    local inventory_cmd="ansible-inventory -i \"$hosts_file\" --list"
+
+    # If we have a password, provide it to the command so it can read vaulted inventories
+    if [[ -f "$vault_pass_source" ]]; then
+        inventory_cmd="$inventory_cmd --vault-password-file \"$vault_pass_source\""
+    elif [[ -n "$vault_pass_source" ]]; then
+        inventory_cmd="$inventory_cmd --vault-password-file <(echo \"$vault_pass_source\")"
+    fi
+    
+    # Use python to safely parse the --list output and find all groups for a host
+    groups=$(eval "$inventory_cmd" 2>/dev/null | python3 -c '
+import json, sys
+host_to_find = sys.argv[1]
+try:
+    inventory = json.load(sys.stdin)
+    host_groups = []
+    for group, data in inventory.items():
+        if group.startswith("_") or group == "all": continue
+        if isinstance(data, dict) and "hosts" in data:
+            if host_to_find in data.get("hosts", []):
+                host_groups.append(group)
+    print(" ".join(host_groups))
+except (json.JSONDecodeError, IndexError, TypeError):
+    sys.exit(0)
+' "$host_key" 2>/dev/null)
+
+
+    for group in $groups; do
+        # Check for directory-style group_vars
+        if [[ -f "group_vars/$group/vault.yml" ]]; then
+            echo "group_vars/$group/vault.yml"
+            return
+        fi
+        # Check for file-style group_vars
+        if [[ -f "group_vars/${group}.yml" && "$(head -n1 "group_vars/${group}.yml")" == "\$ANSIBLE_VAULT;1.1;AES256" ]]; then
+             echo "group_vars/${group}.yml"
+             return
+        fi
+    done
+    
+    # 3. Fallback to the 'all' group vault file
+    if [[ -f "group_vars/all/vault.yml" ]]; then
+        echo "group_vars/all/vault.yml"
+        return
+    fi
+    
+    # 4. Fallback to legacy vault.yml
+    if [[ -f "vault.yml" ]]; then
+        echo "vault.yml"
+        return
+    fi
+
+    echo "" # Return empty if no vault file is found
+}
+
+
 # Function to build ansible-playbook command
 build_ansible_command() {
     local playbook_path="$1"
     local extra_vars="$2"
-    
-    local cmd="ansible-playbook \"$playbook_path\""
-    
+    local vault_pass_source="$3" # This can now be a file path OR the raw password
+    local vault_file_for_injection="$4" # The specific vault file to decrypt for injection
+
+    local cmd="\"$VENV_ANSIBLE\" \"$playbook_path\""
+
     # Add inventory file - use environment-specific hosts file
     local hosts_file="inventory/hosts-$ENVIRONMENT"
     if [[ ! -f "$hosts_file" ]]; then
@@ -351,29 +491,84 @@ build_ansible_command() {
         hosts_file="hosts"
     fi
     cmd="$cmd -i \"$hosts_file\""
-    
+
     # Add environment variable, using a non-reserved name
     cmd="$cmd -e \"target_env=$ENVIRONMENT\""
-    
+
     # Add extra vars if provided
     if [[ -n "$extra_vars" ]]; then
         cmd="$cmd -e \"$extra_vars\""
     fi
-    
+
     # Add vault options if needed
     if [[ "$USE_VAULT" = true ]]; then
-        if [[ -n "$VAULT_PASSWORD_FILE" ]]; then
-            cmd="$cmd --vault-password-file \"$VAULT_PASSWORD_FILE\""
+        if [[ -f "$vault_pass_source" ]]; then
+            # It's a file path
+            cmd="$cmd --vault-password-file \"$vault_pass_source\""
+        elif [[ -n "$vault_pass_source" ]]; then
+            # It's the raw password, use process substitution
+            cmd="$cmd --vault-password-file <(echo \"$vault_pass_source\")"
         else
+            # Fallback to interactive prompt
             cmd="$cmd --ask-vault-pass"
         fi
     fi
-    
+
+    # For network device playbooks, inject credentials from the vault
+    if [[ "$playbook_path" == *network_hardening* && "$USE_VAULT" = true ]]; then
+        local target_host
+        target_host=$(echo "$extra_vars" | sed -n "s/.*target_hosts=\\([^,]*\\).*/\\1/p")
+        
+        local vault_file_to_use
+        vault_file_to_use=$(find_host_vault_file "$target_host" "$vault_pass_source")
+
+        if [[ -n "$vault_file_to_use" ]]; then
+            echo "Network playbook detected. Using vault '$vault_file_to_use' for credentials..." >&2
+            
+            local decrypted_vault_content=""
+            if [[ -f "$vault_pass_source" ]]; then
+                # It's a file path
+                decrypted_vault_content=$(ansible-vault view --vault-password-file "$vault_pass_source" "$vault_file_to_use" 2>/dev/null)
+            elif [[ -n "$vault_pass_source" ]]; then
+                # It's the raw password, use process substitution
+                decrypted_vault_content=$(ansible-vault view --vault-password-file <(echo "$vault_pass_source") "$vault_file_to_use" 2>/dev/null)
+            fi
+
+            if [[ $? -eq 0 && -n "$decrypted_vault_content" ]]; then
+                local vault_user=$(echo "$decrypted_vault_content" | grep "ansible_user:" | head -n1 | cut -d'"' -f2 | tr -d ' ')
+                local vault_password=$(echo "$decrypted_vault_content" | grep "ansible_password:" | head -n1 | cut -d'"' -f2 | tr -d ' ')
+                local vault_enable=$(echo "$decrypted_vault_content" | grep "ansible_become_password:" | head -n1 | cut -d'"' -f2 | tr -d ' ')
+                
+                if [[ -n "$vault_user" && -n "$vault_password" && -n "$vault_enable" ]]; then
+                    cmd="$cmd -e ansible_user=\"$vault_user\" -e ansible_password=\"$vault_password\" -e ansible_become_password=\"$vault_enable\""
+                    echo "Successfully injected vault credentials for network device." >&2
+                else
+                    echo "Warning: Could not extract all required credentials from vault '$vault_file_to_use'." >&2
+                fi
+            else
+                echo "Warning: Failed to decrypt or read vault file '$vault_file_to_use'. Playbook may fail." >&2
+            fi
+        else
+            echo "Warning: No vault file found for host '$target_host'. Relying on other credential sources." >&2
+        fi
+    elif [[ "$playbook_path" == *network_hardening* && "$USE_VAULT" = false ]]; then
+        # Fallback to environment variables if vault is not used for network devices
+        if [[ -n "$CISCO_USER" && -n "$CISCO_PASSWORD" && -n "$CISCO_ENABLE_PASSWORD" ]]; then
+            cmd="$cmd -e ansible_user=$CISCO_USER -e ansible_password=$CISCO_PASSWORD -e ansible_become_password=$CISCO_ENABLE_PASSWORD"
+            echo "Using environment variable credentials for network device." >&2
+        else
+            echo "Warning: Vault is disabled and Cisco environment variables not set. Playbook may fail." >&2
+        fi
+    fi
+
+    # Add static network connection parameters ONLY IF they aren't in the command already
+    # This avoids overriding inventory variables but ensures they are present if needed.
+    if ! echo "$cmd" | grep -q "ansible_connection=network_cli"; then
+        cmd="$cmd -e ansible_connection=network_cli -e ansible_network_os=cisco.ios.ios -e ansible_network_cli_ssh_type=paramiko -e ansible_paramiko_host_key_auto_add=true -e \"ansible_ssh_common_args=-o KexAlgorithms=diffie-hellman-group14-sha1 -o HostKeyAlgorithms=ssh-rsa -o Ciphers=aes256-cbc -o MACs=hmac-sha1 -o StrictHostKeyChecking=no\" -e \"ansible_ssh_extra_args=-o PubkeyAuthentication=no\""
+    fi
+
     echo "$cmd"
 }
-
-g_playbook_paths=()
-g_playbook_names=()
 
 # Function to list playbooks in a directory
 list_playbooks() {
@@ -445,24 +640,19 @@ select_playbook_and_run() {
             hosts_file="hosts"
         fi
 
-        # Use Internal Field Separator (IFS) to split comma-separated input
         IFS=',' read -ra targets_array <<< "$hosts_input"
         for target in "${targets_array[@]}"; do
-            # Trim whitespace
             target=$(echo "$target" | xargs)
             if [[ -z "$target" ]]; then
                 continue
             fi
-
             if [[ "$target" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
                 echo -e "${CYAN}    -> Searching for host with IP $target in $hosts_file...${NC}"
-                
                 local host_key
                 host_key=$(awk -v ip="$target" '
                     NF == 1 && /:/ { current_host = $1; sub(/:$/, "", current_host); }
                     NF == 2 && ($1 == "ansible_host:" || $1 == "ansible_ip:") && $2 == ip { print current_host; exit; }
                 ' "$hosts_file")
-
                 if [[ -n "$host_key" ]]; then
                     echo -e "${GREEN}    -> Found host key: '$host_key'. Targeting this host.${NC}"
                     final_targets+=("$host_key")
@@ -471,12 +661,9 @@ select_playbook_and_run() {
                     final_targets+=("$target")
                 fi
             else
-                # Not an IP, so assume it's a hostname or group and add it directly
                 final_targets+=("$target")
             fi
         done
-
-        # Join the array back into a comma-separated string for Ansible
         local target_hosts
         target_hosts=$(IFS=,; echo "${final_targets[*]}")
 
@@ -485,14 +672,34 @@ select_playbook_and_run() {
             echo -e "${GREEN}Executing $(basename "$playbook_to_run") on hosts '$target_hosts'...${NC}"
             echo -e "${CYAN}Environment: $ENVIRONMENT${NC}"
 
+            local vault_pass_source="$VAULT_PASSWORD_FILE"
+            
+            # If vault is enabled and no password file is set, prompt the user generically once.
+            if [[ "$USE_VAULT" = true && -z "$vault_pass_source" ]]; then
+                echo "Enter vault password:"
+                read -s vault_pass_source
+            fi
+
+            # Now, find the correct vault file to use for credential injection, passing the password if we have it.
+            local first_target_host
+            first_target_host=$(echo "$target_hosts" | cut -d, -f1)
+            local vault_file_to_use
+            vault_file_to_use=$(find_host_vault_file "$first_target_host" "$vault_pass_source")
+
             # Build and execute command
             local cmd
-            cmd=$(build_ansible_command "$playbook_to_run" "target_hosts=$target_hosts")
-            echo -e "${YELLOW}Command: $cmd${NC}"
+            cmd=$(build_ansible_command "$playbook_to_run" "target_hosts=$target_hosts" "$vault_pass_source" "$vault_file_to_use")
             echo ""
-
+            
             # Execute the command
+            export ANSIBLE_CONFIG="$(pwd)/ansible.cfg"
             eval "$cmd"
+            
+            local cmd_exit_code=$?
+            # Clean up temporary vault pass file if it was created
+            unset ANSIBLE_CONFIG
+            
+            return $cmd_exit_code
         else
             echo -e "${RED}Invalid choice. Exiting.${NC}"
         fi

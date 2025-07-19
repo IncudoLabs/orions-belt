@@ -112,6 +112,35 @@ link_files() {
     echo ""
 }
 
+link_directory() {
+    local dir_name=$1
+    local src_path="$PRIVATE_REPO_DIR/$dir_name"
+    local dest_path="$ORIONS_BELT_DIR/$dir_name"
+
+    echo "--- Linking directory $src_path to $dest_path ---"
+
+    # Only proceed if the source directory actually exists in the private repo
+    if [ ! -d "$src_path" ]; then
+        echo "Source directory $src_path not found. Skipping."
+        return
+    fi
+
+    # Remove the destination if it already exists to prevent errors
+    if [ -e "$dest_path" ] || [ -L "$dest_path" ]; then
+        echo "Removing existing file/link/directory at: $dest_path"
+        rm -rf "$dest_path"
+    fi
+
+    # Ensure the parent directory of the destination exists
+    mkdir -p "$(dirname "$dest_path")"
+
+    echo "Creating link: $dest_path -> $src_path"
+    ln -s "$src_path" "$dest_path"
+    
+    echo "--- Finished linking for $dir_name ---"
+    echo ""
+}
+
 # --- Main Logic ---
 
 echo "Orion's Belt Setup Environment for Private inventory, config, and Custom"
@@ -127,6 +156,8 @@ case "$main_choice" in
     link_files "inventory"
     link_files "config"
     link_files "Custom"
+    link_directory "group_vars"
+    link_directory "host_vars"
     echo "All tasks completed successfully."
     ;;
   2)
@@ -134,6 +165,8 @@ case "$main_choice" in
     link_files "inventory"
     link_files "config"
     link_files "Custom"
+    link_directory "group_vars"
+    link_directory "host_vars"
     echo "All symbolic links have been created successfully."
     ;;
   *)
