@@ -11,9 +11,18 @@ The `setup_env.sh` script automates the process of cloning your private reposito
 The script works by creating **symbolic links** from your private repository to the corresponding directories in `orions-belt`. The following directories are targeted:
 - `inventory/`
 - `config/`
+- `group_vars/`
+- `host_vars/`
 - `Custom/`
 
-These target directories in the main `orions-belt` repository are included in the `.gitignore` file, ensuring that your private, linked files are never accidentally committed to the public repository.
+These directories are where you store environment-specific configurations:
+-   **`group_vars/`**: Contains variables that apply to groups of hosts in your inventory. This is the standard location for `vault.yml` files containing encrypted secrets.
+-   **`host_vars/`**: Contains variables that apply to specific individual hosts.
+-   **`inventory/`**: Defines the hosts and groups that Ansible manages.
+-   **`config/`**: Can be used for other application-specific configuration files.
+-   **`Custom/`**: Intended for custom playbooks, roles, or modules that are specific to your environment.
+
+All of these target directories in the main `orions-belt` repository are included in the `.gitignore` file, ensuring that your private, linked files are never accidentally committed to the public repository.
 
 ## Setup Instructions
 
@@ -52,7 +61,7 @@ This project is designed to facilitate a secure and standard industry practice: 
 
 1.  **Store Your Vault File**: Place your `ansible-vault` encrypted file(s) in the `group_vars/all/` directory inside your **private** repository. For example: `.../your-private-repo/group_vars/all/vault.yml`.
 
-2.  **Automated Symlinking**: When you run the `./setup_env.sh` script, it now automatically creates a symbolic link from your private vault file to the corresponding location in the main `orions-belt` project (`orions-belt/group_vars/all/vault.yml`). This makes your secrets available to Ansible without exposing them.
+2.  **Automated Symlinking**: The `setup_env.sh` script symlinks the entire `group_vars` directory from your private repository into the `orions-belt` project. This action makes your `vault.yml` file (and any other group variables) available to Ansible without exposing them in the public repository.
 
 **CRITICAL SECURITY NOTICE:**
 -   **DO NOT** commit your `vault.yml` file or any file containing secrets to the public `orions-belt` repository or any public forks.
