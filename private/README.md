@@ -11,9 +11,18 @@ The `setup_env.sh` script automates the process of cloning your private reposito
 The script works by creating **symbolic links** from your private repository to the corresponding directories in `orions-belt`. The following directories are targeted:
 - `inventory/`
 - `config/`
+- `group_vars/`
+- `host_vars/`
 - `Custom/`
 
-These target directories in the main `orions-belt` repository are included in the `.gitignore` file, ensuring that your private, linked files are never accidentally committed to the public repository.
+These directories are where you store environment-specific configurations:
+-   **`group_vars/`**: Contains variables that apply to groups of hosts in your inventory. This is the standard location for `vault.yml` files containing encrypted secrets.
+-   **`host_vars/`**: Contains variables that apply to specific individual hosts.
+-   **`inventory/`**: Defines the hosts and groups that Ansible manages.
+-   **`config/`**: Can be used for other application-specific configuration files.
+-   **`Custom/`**: Intended for custom playbooks, roles, or modules that are specific to your environment.
+
+All of these target directories in the main `orions-belt` repository are included in the `.gitignore` file, ensuring that your private, linked files are never accidentally committed to the public repository.
 
 ## Setup Instructions
 
@@ -42,12 +51,27 @@ These target directories in the main `orions-belt` repository are included in th
     - **Option 1: Clone and Link:** This will first clone the repository from `PRIVATE_REPO_URL` into the `PRIVATE_REPO_DIR`. If the directory already exists, it will ask for confirmation before removing it. After cloning, it will create the symbolic links.
     - **Option 2: Link Only:** This option skips the cloning step and proceeds directly to creating the symbolic links. Use this if you have already cloned the repository or are managing it manually.
 
-## Managing Secrets and Credentials
+## Managing Secrets with Ansible Vault
 
-**IMPORTANT:** Do not store sensitive information like passwords, API keys, or tokens directly in your configuration files (`config-*.yml`). These files are meant for environment-specific settings, not secrets.
+The recommended way to handle secrets (passwords, API keys) is with Ansible Vault. This feature allows you to encrypt sensitive data directly within your repository.
 
-For managing credentials, please use one of the following secure methods:
-- **Ansible Vault:** Encrypt sensitive variables within your playbooks or inventory files.
-- **Environment Variables:** Load secrets from the `.env` file at runtime (or other secure means), which should never be committed to version control.
+### The Private Repository Workflow (Recommended)
+
+This project is designed to facilitate a secure and standard industry practice: storing your encrypted `vault.yml` file within your private configuration repository.
+
+1.  **Store Your Vault File**: Place your `ansible-vault` encrypted file(s) in the `group_vars/all/` directory inside your **private** repository. For example: `.../your-private-repo/group_vars/all/vault.yml`.
+
+2.  **Automated Symlinking**: The `setup_env.sh` script symlinks the entire `group_vars` directory from your private repository into the `orions-belt` project. This action makes your `vault.yml` file (and any other group variables) available to Ansible without exposing them in the public repository.
+
+**CRITICAL SECURITY NOTICE:**
+-   **DO NOT** commit your `vault.yml` file or any file containing secrets to the public `orions-belt` repository or any public forks.
+-   Your vault file should **ONLY** be committed to your private repository. The `.gitignore` file in the main project is configured to prevent accidental commits of these linked files.
+
+### Why This is an Industry Standard
+
+This approach of separating logic from secrets is a cornerstone of modern DevOps and GitOps practices. It allows you to:
+-   **Keep Public Code Clean**: The public automation logic in Orion's Belt remains free of any sensitive data.
+-   **Version Control Secrets Securely**: You get the benefits of version control (history, branching) for your secrets without exposing them publicly.
+-   **Maintain a Single Source of Truth**: Your private repository becomes the single source of truth for your environment's specific configuration and secrets, while the public repo provides the tooling.
 
 By following this model, you can maintain a clean separation between public code and private configuration, making your Orion's Belt deployment both secure and easy to maintain. 

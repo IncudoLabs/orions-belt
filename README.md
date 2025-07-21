@@ -76,7 +76,9 @@ cp inventory/hosts-example inventory/hosts-development
 
 Orion's Belt is designed to work with a separate, private repository to manage your sensitive and environment-specific files, such as inventory hosts, custom playbooks, and configurations. This keeps your private data secure while allowing you to keep the main Orion's Belt codebase up to date.
 
-For detailed instructions on how to set up your private repository and link it to your Orion's Belt installation, please see the guide here:
+**A note on secrets:** While this method is ideal for inventory and configuration, special care must be taken with secrets. Do not store sensitive data like Ansible Vault files in the public `orions-belt` repository. The private repository workflow provides a secure, industry-standard method for managing secrets.
+
+For detailed instructions on how to set up your private repository and securely manage secrets using this workflow, please see the guide here:
 - **[Private Asset Management Guide](private/README.md)**
 
 [Back to top](#table-of-contents)
