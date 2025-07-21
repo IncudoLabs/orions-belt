@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# 
+# Script ID: UNASSIGNED
+# Compatibility
+# Tested on:
+#        Cisco 3750X / Cisco IOS 15.0 
+#        Cisco C9200L / Cisco IOS 17.12 
+
+
+---
+# Playbook: UNASSIGNED_configure_default_gateway.yml
+# Description: This playbook configures the default gateway on Cisco IOS devices.
+#              It first shows the current default gateway and prompts for confirmation before making changes.
+#
+# Requirements:
+#   - Ansible `cisco.ios` collection must be installed (`ansible-galaxy collection install cisco.ios`).
+#   - An Ansible inventory file with the target devices defined.
+#   - Connection variables and credentials must be defined in inventory or an encrypted vault.
+#
+- name: "Default Gateway: Configure Cisco IOS Default Gateway"
+  hosts: "{{ target_hosts }}"
+  gather_facts: false
+  connection: network_cli
+  become: yes
+  become_method: enable
+
+  tasks:
+    - name: Gather current default gateway
+      cisco.ios.ios_command:
+        commands: "show ip route"
+      register: sh_ip_route_output
+
+    - name: Find the line containing the gateway information
+      ansible.builtin.set_fact:
+        gateway_line: "{{ sh_ip_route_output.stdout[0] | regex_search('(?:Default gateway is|Gateway of last resort is) [0-9\\\\.]+') | default('') }}"
+      when: sh_ip_route_output.stdout is defined
+
+    - name: Extract the IP address from the gateway line
+      ansible.builtin.set_fact:
+        current_gateway_ip: "{{ gateway_line | regex_search('[0-9\\\\.]+') | default('Not configured') }}"
+
+    - name: Display current default gateway
+      ansible.builtin.debug:
+        msg: "Current default gateway: {{ current_gateway_ip }}"
+
+    - name: Ask if user wants to change gateway
+      ansible.builtin.pause:
+        prompt: "Current gateway is {{ current_gateway_ip }}. Do you want to change it? (yes/no)"
+      register: want_to_change
+
+    - name: Prompt for new gateway IP
+      ansible.builtin.pause:
+        prompt: "Enter the new default gateway IP address"
+      register: new_gateway_prompt
+      when: want_to_change.user_input | lower == 'yes'
+
+    - name: Set default gateway
+      cisco.ios.ios_config:
+        lines: "ip default-gateway {{ new_gateway_prompt.user_input }}"
+      notify: save_config
+      when: want_to_change.user_input | lower == 'yes'
+
+    - name: Display result
+      ansible.builtin.debug:
+        msg: "Default gateway has been set to {{ new_gateway_prompt.user_input }}"
+      when: want_to_change.user_input | lower == 'yes'
+
+  handlers:
+    - name: save_config
+      listen: "save_config"
+      cisco.ios.ios_config:
+        save_when: modified
