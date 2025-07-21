@@ -14,13 +14,10 @@ Custom/*
 private/*
 !private/README.md
 !private/setup_env.sh
-# Ignore inventory/ and config/ directories but allow base and example files
-inventory/*
-!inventory/hosts
-!inventory/hosts.example
-config/*
-!config/config.yml
-!config/config-example.yml
+
+# Ignore the entire inventory directory as it is symlinked from a private repo.
+# Users should refer to the inventory.example directory for structure.
+inventory/
 
 # Ignore group_vars/ and host_vars/ entirely as they are symlinked from 
 # the private repo with the ./private/setup_env.sh script.
