@@ -20,7 +20,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-# Playbook ID: OB-CFG-006
+# Playbook ID: OB-CFG-007
 ---
 - name: Remove Wazuh Agent from Windows
   hosts: "{{ target_hosts }}"
