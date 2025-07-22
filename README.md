@@ -44,31 +44,20 @@ Our development is continuously guided by these core research principles.
 
 ## Getting Started
 
-This project uses a flexible, environment-based configuration system. To get started, you will need to create configuration and inventory files for your target environment (e.g., `development`, `staging`, `production`).
+Orion's Belt is designed to be used with a separate, private repository where you manage your sensitive and environment-specific files, such as your inventory, group variables, and secrets. This approach keeps your private data secure while allowing you to keep the main Orion's Belt codebase up to date.
 
-The runner script (`run_playbooks.sh`) will automatically load the correct files based on the selected environment.
+The core principle of this design is that **playbooks are independent**. You can run any playbook directly with the standard `ansible-playbook` command, and Ansible's native `group_vars` and inventory logic will automatically load the correct configuration.
 
-For detailed instructions, setup guidance, and a full walkthrough with examples, please see our comprehensive **[Configuration System Usage Guide](example_usage.md)**.
+The `run_playbooks.sh` script is provided as a **convenience**, offering a user-friendly menu to help you select playbooks and targets, but it is **not a dependency**.
 
-A basic first-time setup for a `development` environment would look like this:
+For detailed instructions on how to set up your private repository, structure your inventory, and securely manage secrets, please see our comprehensive guide:
+- **[Private Asset Management Guide](private/README.md)**
 
-```bash
-# 1. Create the necessary directories
-mkdir -p config inventory
-
-# 2. Create a development configuration file
-cp config/config-example.yml config/config-development.yml
-
-# 3. Create a development inventory file
-cp inventory/hosts-example inventory/hosts-development
-
-# 4. Edit the new files to match your environment
-# nano config/config-development.yml
-# nano inventory/hosts-development
-
-# 5. Run the script for the development environment
-./run_playbooks.sh development
-```
+A high-level overview of the setup is:
+1.  Create a private Git repository for your inventory and variables.
+2.  Use the `inventory.example` directory as a blueprint for your structure.
+3.  Run the `private/setup_env.sh` script to git clone and create a symbolic link from your private repo to the `inventory/` directory in this project.
+4.  Run playbooks using the `run_playbooks.sh` menu or directly with the `ansible-playbook` command.
 
 [Back to top](#table-of-contents)
 

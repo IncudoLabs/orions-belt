@@ -27,53 +27,24 @@
   gather_facts: yes
   become: yes
 
-  pre_tasks:
-    - name: Set wazuh password from environment variable if available
-      ansible.builtin.set_fact:
-        wazuh_registration_password: "{{ lookup('env', 'WAZUH_REGISTRATION_PASSWORD') }}"
-      when: lookup('env', 'WAZUH_REGISTRATION_PASSWORD')
-      run_once: true
-
-    - name: Prompt for Wazuh registration password if not in environment
-      ansible.builtin.pause:
-        prompt: "Enter the Wazuh registration password"
-        echo: no
-      register: password_prompt_result
-      when: not lookup('env', 'WAZUH_REGISTRATION_PASSWORD')
-      run_once: true
-
-    - name: Set wazuh password from prompt
-      ansible.builtin.set_fact:
-        wazuh_registration_password: "{{ password_prompt_result.user_input }}"
-      when: not lookup('env', 'WAZUH_REGISTRATION_PASSWORD')
-      run_once: true
-
-    - name: Load base configuration
-      ansible.builtin.include_vars:
-        file: ../../../config/config.yml
-        name: base_config
-
-    - name: Load environment-specific configuration
-      ansible.builtin.include_vars:
-        file: "../../../config/config-{{ target_env | default('development') }}.yml"
-        name: env_config
-
-    - name: Merge configurations
-      ansible.builtin.set_fact:
-        wazuh: "{{ base_config.wazuh | combine(env_config.wazuh | default({}), recursive=True) }}"
-
-    - name: Fail if Wazuh manager host is not defined
-      ansible.builtin.fail:
-        msg: "The 'wazuh.agent.manager_host' variable is not defined in your config files."
-      when: wazuh.agent.manager_host is not defined or wazuh.agent.manager_host == ""
-
   vars:
+    # These variables are now loaded automatically from group_vars
     wazuh_agent_version: "{{ wazuh.agent.version }}"
     wazuh_agent_deb_url: "https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_{{ wazuh_agent_version }}_amd64.deb"
     wazuh_agent_deb_path: "/tmp/wazuh-agent-{{ wazuh_agent_version }}.deb"
     wazuh_install_dir: /var/ossec
 
   tasks:
+    - name: Fail if Wazuh manager host is not defined
+      ansible.builtin.fail:
+        msg: "The 'wazuh.agent.manager_host' variable is not defined in group_vars."
+      when: wazuh.agent.manager_host is not defined or wazuh.agent.manager_host == "" or wazuh.agent.manager_host == "X.X.X.X"
+
+    - name: Fail if Wazuh registration password is not defined
+      ansible.builtin.fail:
+        msg: "The 'wazuh.agent.wazuh_registration_password' variable is not defined in group_vars (ideally in a vault file)."
+      when: wazuh.agent.wazuh_registration_password is not defined or wazuh.agent.wazuh_registration_password == ""
+
     - name: Check if Wazuh agent is already installed
       ansible.builtin.stat:
         path: "{{ wazuh_install_dir }}/etc/ossec.conf"
@@ -98,7 +69,7 @@
           ansible.builtin.shell:
             cmd: >
               WAZUH_MANAGER='{{ wazuh.agent.manager_host }}'
-              WAZUH_REGISTRATION_PASSWORD='{{ wazuh_registration_password }}'
+              WAZUH_REGISTRATION_PASSWORD='{{ wazuh.agent.wazuh_registration_password }}'
               dpkg -i {{ wazuh_agent_deb_path }}
 
     # RedHat Family Installation
@@ -118,7 +89,7 @@
           ansible.builtin.shell:
             cmd: >
               WAZUH_MANAGER='{{ wazuh.agent.manager_host }}'
-              WAZUH_REGISTRATION_PASSWORD='{{ wazuh_registration_password }}'
+              WAZUH_REGISTRATION_PASSWORD='{{ wazuh.agent.wazuh_registration_password }}'
               yum -y install wazuh-agent
 
     - name: Enable and start Wazuh agent service

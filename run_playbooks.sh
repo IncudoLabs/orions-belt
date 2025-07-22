@@ -29,6 +29,12 @@
 # This script provides a user-friendly menu system to select and run Ansible
 # playbooks for system hardening and configuration.
 
+# Ensure the script runs from its own directory
+cd "$(dirname "$0")" || exit
+
+# Unset ansible_user to prevent environment variable leakage
+unset ansible_user
+
 # --- Virtual Environment Setup ---
 VENV_DIR=".venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
@@ -40,12 +46,20 @@ setup_virtual_environment() {
         
         # Ensure python3-venv is installed on Debian-based systems
         if command -v apt-get &> /dev/null; then
-            if ! dpkg -s python3-venv &> /dev/null; then
-                echo "Attempting to install python3-venv..."
+            REQUIRED_PACKAGES=("python3-venv" "libkrb5-dev" "gcc" "python3-dev")
+            PACKAGES_TO_INSTALL=()
+            for pkg in "${REQUIRED_PACKAGES[@]}"; do
+                if ! dpkg -s "$pkg" &> /dev/null; then
+                    PACKAGES_TO_INSTALL+=("$pkg")
+                fi
+            done
+
+            if [ ${#PACKAGES_TO_INSTALL[@]} -gt 0 ]; then
+                echo "Attempting to install required system packages: ${PACKAGES_TO_INSTALL[*]}..."
                 sudo apt-get update
-                sudo apt-get install -y python3-venv
+                sudo apt-get install -y "${PACKAGES_TO_INSTALL[@]}"
                 if [ $? -ne 0 ]; then
-                    echo -e "${RED}Failed to install python3-venv. Please install it manually and re-run this script.${NC}"
+                    echo -e "${RED}Failed to install required system packages. Please install them manually and re-run this script.${NC}"
                     exit 1
                 fi
             fi
@@ -67,7 +81,13 @@ setup_virtual_environment() {
     else
         # Always ensure dependencies are in sync on every run
         # This is an idempotent action and will be fast if everything is up to date
-        "$VENV_DIR/bin/pip" install -r requirements.txt &>/dev/null
+        "$VENV_DIR/bin/pip" install -r requirements.txt
+    fi
+
+    # Install ansible-galaxy collections if requirements file exists
+    if [ -f "collections/requirements.yml" ]; then
+        echo "Installing Ansible collections from collections/requirements.yml..."
+        "$VENV_DIR/bin/ansible-galaxy" collection install -r "collections/requirements.yml"
     fi
     
     # Set the VENV_ANSIBLE path after ensuring the virtual environment exists
@@ -100,54 +120,18 @@ NC='\033[0m' # No Color
 # Global variables
 KERBEROS_INITIALIZED=false
 KERBEROS_PRINCIPAL=""
-# Allow environment to be set via command line argument or environment variable
-if [[ -n "$1" ]]; then
-    ENVIRONMENT="$1"
-elif [[ -n "$ANSIBLE_ENVIRONMENT" ]]; then
-    ENVIRONMENT="$ANSIBLE_ENVIRONMENT"
-else
-    ENVIRONMENT="development"
-    # Set the environment variable for future runs when using default
-    export ANSIBLE_ENVIRONMENT="$ENVIRONMENT"
-fi
-
-# Validate environment parameter
-if [[ "$ENVIRONMENT" != "production" && "$ENVIRONMENT" != "development" && "$ENVIRONMENT" != "staging" ]]; then
-    echo -e "${RED}Error: Invalid environment '$ENVIRONMENT'${NC}"
-    echo -e "${YELLOW}Valid environments are: production, development, staging${NC}"
-    exit 1
-fi
-
 VAULT_PASSWORD_FILE=""
-USE_VAULT=true
 clear
 # Function to display menu
 show_menu() {
     echo -e "${YELLOW}=== Orion's Belt Ansible Playbook Runner ===${NC}"
     echo ""
     echo -e "${YELLOW}Current Configuration:${NC}"
-    echo -e "  Environment: ${CYAN}$ENVIRONMENT${NC}"
-    echo -e "  Vault: ${CYAN}$([ "$USE_VAULT" = true ] && echo "Enabled" || echo "Disabled")${NC}"
+    echo -e "  Inventory: ${CYAN}inventory/hosts${NC}"
     if [[ "$KERBEROS_INITIALIZED" = true ]]; then
         echo -e "  Kerberos: ${GREEN}Initialized (${KERBEROS_PRINCIPAL})${NC}"
     else
         echo -e "  Kerberos: ${YELLOW}Not Initialized${NC}"
-    fi
-    
-    # Show configuration files being used
-    echo -e "  Configuration: ${CYAN}config/config.yml${NC}"
-    if [[ -f "config/config-$ENVIRONMENT.yml" ]]; then
-        echo -e "    ${GREEN}✓ with overrides from config/config-$ENVIRONMENT.yml${NC}"
-    else
-        echo -e "    ${YELLOW}⚠ no environment-specific overrides (config/config-$ENVIRONMENT.yml not found)${NC}"
-    fi
-    
-    # Show hosts file being used
-    local hosts_file="inventory/hosts-$ENVIRONMENT"
-    if [[ -f "$hosts_file" ]]; then
-        echo -e "  Inventory: ${CYAN}$hosts_file${NC}"
-    else
-        echo -e "  Inventory: ${YELLOW}hosts (fallback - $hosts_file not found)${NC}"
     fi
     
     echo ""
@@ -161,100 +145,49 @@ show_menu() {
 }
 
 # Function to configure environment
-configure_environment() {
+configure_runner() {
     echo -e "${GREEN}=== Runner Settings ===${NC}"
     echo ""
     echo -e "${YELLOW}Current Settings:${NC}"
-    echo "  Environment: $ENVIRONMENT"
-    echo "  Vault Usage: $([ "$USE_VAULT" = true ] && echo -e "${GREEN}Enabled${NC}" || echo -e "${YELLOW}Disabled${NC}")"
-    if [[ "$USE_VAULT" = true ]]; then
-        echo "  Vault Password File: ${VAULT_PASSWORD_FILE:-"Interactive Prompt"}"
-    fi
+    echo "  Vault Password File: ${VAULT_PASSWORD_FILE:-"Interactive Prompt"}"
     if [[ "$KERBEROS_INITIALIZED" = true ]]; then
-        echo "  Kerberos: ${GREEN}Initialized (${KERBEROS_PRINCIPAL})${NC}"
+        echo -e "  Kerberos: ${GREEN}Initialized (${KERBEROS_PRINCIPAL})${NC}"
     else
-        echo "  Kerberos: ${YELLOW}Not Initialized${NC}"
+        echo -e "  Kerberos: ${YELLOW}Not Initialized${NC}"
     fi
     echo ""
     
-    # Show configuration files being used
-    echo -e "${YELLOW}Configuration Files:${NC}"
-    echo -e "  Base config: ${CYAN}config/config.yml${NC}"
-    if [[ -f "config/config-$ENVIRONMENT.yml" ]]; then
-        echo -e "    ${GREEN}✓ Environment overrides: config/config-$ENVIRONMENT.yml${NC}"
-    else
-        echo -e "    ${YELLOW}⚠ No environment overrides (config/config-$ENVIRONMENT.yml not found)${NC}"
-    fi
-    
-    # Show hosts file being used
-    echo -e "  Inventory file:"
-    local hosts_file="inventory/hosts-$ENVIRONMENT"
-    if [[ -f "$hosts_file" ]]; then
-        echo -e "    ${GREEN}✓ Using: $hosts_file${NC}"
-    else
-        echo -e "    ${YELLOW}⚠ Using fallback: hosts (environment-specific $hosts_file not found)${NC}"
-    fi
-    
-    echo ""
     echo -e "${YELLOW}Available Options:${NC}"
-    echo "1. Set Environment (development/staging/production)"
-    echo "2. Toggle Vault Usage (On/Off)"
-    echo "3. Set Vault Password File"
-    echo "4. Test Configuration"
-    echo "5. Kerberos Authentication"
-    echo "6. Back to Main Menu"
+    echo "1. Set Vault Password File"
+    echo "2. Test Configuration"
+    echo "3. Kerberos Authentication"
+    echo "4. Back to Main Menu"
     echo ""
     
-    read -p "Enter your choice (1-6): " config_choice
+    read -p "Enter your choice (1-4): " config_choice
     
     case $config_choice in
         1)
-            echo -e "${YELLOW}Available Environments:${NC}"
-            echo "1. development"
-            echo "2. staging"
-            echo "3. production"
-            read -p "Enter environment choice (1-3): " env_choice
-            case $env_choice in
-                1) ENVIRONMENT="development" ;;
-                2) ENVIRONMENT="staging" ;;
-                3) ENVIRONMENT="production" ;;
-                *) echo -e "${RED}Invalid choice. Keeping current environment.${NC}" ;;
-            esac
-            export ANSIBLE_ENVIRONMENT="$ENVIRONMENT"
-            echo -e "${GREEN}Environment set to: $ENVIRONMENT${NC}"
-            ;;
-        2)
-            if [[ "$USE_VAULT" = true ]]; then
-                USE_VAULT=false
-                echo -e "${YELLOW}Vault usage disabled.${NC}"
-            else
-                USE_VAULT=true
-                echo -e "${GREEN}Vault usage enabled.${NC}"
-            fi
-            ;;
-        3)
             read -p "Enter path to vault password file (or press Enter to use interactive): " vault_file
             if [[ -n "$vault_file" ]]; then
                 if [[ -f "$vault_file" ]]; then
                     VAULT_PASSWORD_FILE="$vault_file"
-                    USE_VAULT=true
                     echo -e "${GREEN}Vault password file set to: $vault_file${NC}"
                 else
                     echo -e "${RED}File not found: $vault_file${NC}"
                 fi
             else
                 VAULT_PASSWORD_FILE=""
-                USE_VAULT=true
                 echo -e "${GREEN}Will use interactive vault password prompt${NC}"
             fi
             ;;
-        4)
+        2)
             test_configuration
             ;;
-        5)
+        3)
             handle_kerberos_auth
             ;;
-        6)
+        4)
             return
             ;;
         *)
@@ -337,47 +270,24 @@ test_configuration() {
     echo -e "${GREEN}=== Testing Configuration ===${NC}"
     echo ""
     
-    # Check if config files exist
-    echo -e "${YELLOW}Checking configuration files:${NC}"
-    if [[ -f "config/config.yml" ]]; then
-        echo -e "  ${GREEN}✓ config/config.yml${NC}"
-    else
-        echo -e "  ${RED}✗ config/config.yml (missing)${NC}"
-    fi
-    
-    if [[ -f "config/config-$ENVIRONMENT.yml" ]]; then
-        echo -e "  ${GREEN}✓ config/config-$ENVIRONMENT.yml${NC}"
-    else
-        echo -e "  ${RED}✗ config/config-$ENVIRONMENT.yml (missing)${NC}"
-    fi
-    
-    if [[ -f "vault.yml" ]]; then
-        echo -e "  ${GREEN}✓ vault.yml${NC}"
-        if [[ "$USE_VAULT" = true ]]; then
-            echo -e "  ${CYAN}  (encrypted - will prompt for password)${NC}"
-        fi
-    else
-        echo -e "  ${YELLOW}⚠ vault.yml (not found - some playbooks may fail)${NC}"
-    fi
-    
-    # Check if hosts file exists
+    # Check if inventory file exists
     echo -e "${YELLOW}Checking inventory file:${NC}"
-    local hosts_file="inventory/hosts-$ENVIRONMENT"
-    local fallback_hosts_file="hosts"
+    local hosts_file="inventory/hosts"
     
     if [[ -f "$hosts_file" ]]; then
-        echo -e "  ${GREEN}✓ $hosts_file (environment-specific)${NC}"
-        # Count hosts in the environment-specific file
+        echo -e "  ${GREEN}✓ $hosts_file${NC}"
         host_count=$(grep -c "^[[:space:]]*[a-zA-Z]" "$hosts_file" || echo "0")
         echo -e "  ${CYAN}  (contains $host_count host definitions)${NC}"
-    elif [[ -f "$fallback_hosts_file" ]]; then
-        echo -e "  ${YELLOW}⚠ $fallback_hosts_file (fallback - environment-specific file not found)${NC}"
-        # Count hosts in the fallback file
-        host_count=$(grep -c "^[[:space:]]*[a-zA-Z]" "$fallback_hosts_file" || echo "0")
-        echo -e "  ${CYAN}  (contains $host_count host definitions)${NC}"
-        echo -e "  ${YELLOW}  Consider creating $hosts_file for environment-specific hosts${NC}"
     else
-        echo -e "  ${RED}✗ No hosts file found (neither $hosts_file nor $fallback_hosts_file)${NC}"
+        echo -e "  ${RED}✗ Inventory file not found at $hosts_file${NC}"
+    fi
+
+    # Check for group_vars and host_vars
+    if [[ -d "inventory/group_vars" ]]; then
+        echo -e "  ${GREEN}✓ inventory/group_vars directory found.${NC}"
+    fi
+    if [[ -d "inventory/host_vars" ]]; then
+        echo -e "  ${GREEN}✓ inventory/host_vars directory found.${NC}"
     fi
     
     # Check Kerberos status
@@ -392,8 +302,6 @@ test_configuration() {
     
     echo ""
     echo -e "${YELLOW}Configuration Summary:${NC}"
-    echo "  Environment: $ENVIRONMENT"
-    echo "  Vault Enabled: $USE_VAULT"
     if [[ -n "$VAULT_PASSWORD_FILE" ]]; then
         echo "  Vault Password File: $VAULT_PASSWORD_FILE"
     fi
@@ -406,14 +314,11 @@ g_playbook_names=()
 find_host_vault_file() {
     local host_key="$1" # Assume this is always a valid hostname from inventory
     local vault_pass_source="$2" # Can be a file path or the raw password
-    local hosts_file="inventory/hosts-$ENVIRONMENT"
-    if [[ ! -f "$hosts_file" ]]; then
-        hosts_file="hosts"
-    fi
+    local hosts_file="inventory/hosts"
 
     # 1. Check for host-specific vault file
-    if [[ -f "host_vars/$host_key/vault.yml" ]]; then
-        echo "host_vars/$host_key/vault.yml"
+    if [[ -f "inventory/host_vars/$host_key/vault.yml" ]]; then
+        echo "inventory/host_vars/$host_key/vault.yml"
         return
     fi
 
@@ -448,29 +353,24 @@ except (json.JSONDecodeError, IndexError, TypeError):
 
     for group in $groups; do
         # Check for directory-style group_vars
-        if [[ -f "group_vars/$group/vault.yml" ]]; then
-            echo "group_vars/$group/vault.yml"
+        if [[ -f "inventory/group_vars/$group/vault.yml" ]]; then
+            echo "inventory/group_vars/$group/vault.yml"
             return
         fi
         # Check for file-style group_vars
-        if [[ -f "group_vars/${group}.yml" && "$(head -n1 "group_vars/${group}.yml")" == "\$ANSIBLE_VAULT;1.1;AES256" ]]; then
-             echo "group_vars/${group}.yml"
+        if [[ -f "inventory/group_vars/${group}.yml" && "$(head -n1 "inventory/group_vars/${group}.yml")" == "\$ANSIBLE_VAULT;1.1;AES256" ]]; then
+             echo "inventory/group_vars/${group}.yml"
              return
         fi
     done
     
     # 3. Fallback to the 'all' group vault file
-    if [[ -f "group_vars/all/vault.yml" ]]; then
-        echo "group_vars/all/vault.yml"
+    if [[ -f "inventory/group_vars/all/vault.yml" ]]; then
+        echo "inventory/group_vars/all/vault.yml"
         return
     fi
     
-    # 4. Fallback to legacy vault.yml
-    if [[ -f "vault.yml" ]]; then
-        echo "vault.yml"
-        return
-    fi
-
+    # 4. Fallback to legacy vault.yml is removed as it's no longer used
     echo "" # Return empty if no vault file is found
 }
 
@@ -482,40 +382,30 @@ build_ansible_command() {
     local vault_pass_source="$3" # This can now be a file path OR the raw password
     local vault_file_for_injection="$4" # The specific vault file to decrypt for injection
 
-    local cmd="\"$VENV_ANSIBLE\" \"$playbook_path\""
+    local cmd="\"$VENV_ANSIBLE\" \"$playbook_path\" -vvv"
 
-    # Add inventory file - use environment-specific hosts file
-    local hosts_file="inventory/hosts-$ENVIRONMENT"
-    if [[ ! -f "$hosts_file" ]]; then
-        # Fallback to generic hosts file
-        hosts_file="hosts"
-    fi
+    # Add inventory file
+    local hosts_file="inventory/hosts"
     cmd="$cmd -i \"$hosts_file\""
-
-    # Add environment variable, using a non-reserved name
-    cmd="$cmd -e \"target_env=$ENVIRONMENT\""
 
     # Add extra vars if provided
     if [[ -n "$extra_vars" ]]; then
         cmd="$cmd -e \"$extra_vars\""
     fi
 
-    # Add vault options if needed
-    if [[ "$USE_VAULT" = true ]]; then
+    # Add vault options if a password was provided (meaning an encrypted vault was found)
+    if [[ -n "$vault_pass_source" ]]; then
         if [[ -f "$vault_pass_source" ]]; then
             # It's a file path
             cmd="$cmd --vault-password-file \"$vault_pass_source\""
-        elif [[ -n "$vault_pass_source" ]]; then
+        else
             # It's the raw password, use process substitution
             cmd="$cmd --vault-password-file <(echo \"$vault_pass_source\")"
-        else
-            # Fallback to interactive prompt
-            cmd="$cmd --ask-vault-pass"
         fi
     fi
 
     # For network device playbooks, inject credentials from the vault
-    if [[ "$playbook_path" == *network_hardening* && "$USE_VAULT" = true ]]; then
+    if [[ "$playbook_path" == *"/network_hardening/"* && -n "$vault_pass_source" ]]; then
         local target_host
         target_host=$(echo "$extra_vars" | sed -n "s/.*target_hosts=\\([^,]*\\).*/\\1/p")
         
@@ -551,20 +441,21 @@ build_ansible_command() {
         else
             echo "Warning: No vault file found for host '$target_host'. Relying on other credential sources." >&2
         fi
-    elif [[ "$playbook_path" == *network_hardening* && "$USE_VAULT" = false ]]; then
+    elif [[ "$playbook_path" == *"/network_hardening/"* && -n "$CISCO_USER" && -n "$CISCO_PASSWORD" && -n "$CISCO_ENABLE_PASSWORD" ]]; then
         # Fallback to environment variables if vault is not used for network devices
-        if [[ -n "$CISCO_USER" && -n "$CISCO_PASSWORD" && -n "$CISCO_ENABLE_PASSWORD" ]]; then
-            cmd="$cmd -e ansible_user=$CISCO_USER -e ansible_password=$CISCO_PASSWORD -e ansible_become_password=$CISCO_ENABLE_PASSWORD"
-            echo "Using environment variable credentials for network device." >&2
-        else
-            echo "Warning: Vault is disabled and Cisco environment variables not set. Playbook may fail." >&2
-        fi
+        cmd="$cmd -e ansible_user=$CISCO_USER -e ansible_password=$CISCO_PASSWORD -e ansible_become_password=$CISCO_ENABLE_PASSWORD"
+        echo "Using environment variable credentials for network device." >&2
     fi
 
-    # Add static network connection parameters ONLY IF they aren't in the command already
-    # This avoids overriding inventory variables but ensures they are present if needed.
-    if ! echo "$cmd" | grep -q "ansible_connection=network_cli"; then
-        cmd="$cmd -e ansible_connection=network_cli -e ansible_network_os=cisco.ios.ios -e ansible_network_cli_ssh_type=paramiko -e ansible_paramiko_host_key_auto_add=true -e \"ansible_ssh_common_args=-o KexAlgorithms=diffie-hellman-group14-sha1 -o HostKeyAlgorithms=ssh-rsa -o Ciphers=aes256-cbc -o MACs=hmac-sha1 -o StrictHostKeyChecking=no\" -e \"ansible_ssh_extra_args=-o PubkeyAuthentication=no\""
+    # TODO: This is a temporary fix. The logic for applying connection
+    # settings should be refactored to rely solely on inventory variables
+    # without forcing them via -e flags in this script.
+    if [[ "$playbook_path" == *"/network_hardening/cisco_ios/"* ]]; then
+        # Add static network connection parameters ONLY IF they aren't in the command already
+        # This avoids overriding inventory variables but ensures they are present if needed.
+        if ! echo "$cmd" | grep -q "ansible_connection=network_cli"; then
+            cmd="$cmd -e ansible_connection=network_cli -e ansible_network_os=cisco.ios.ios -e ansible_network_cli_ssh_type=paramiko -e ansible_paramiko_host_key_auto_add=true -e \"ansible_ssh_common_args=-o KexAlgorithms=diffie-hellman-group14-sha1 -o HostKeyAlgorithms=ssh-rsa -o Ciphers=aes256-cbc -o MACs=hmac-sha1 -o StrictHostKeyChecking=no\" -e \"ansible_ssh_extra_args=-o PubkeyAuthentication=no\""
+        fi
     fi
 
     echo "$cmd"
@@ -635,10 +526,7 @@ select_playbook_and_run() {
         read -p "Enter the hosts/group/IPs (comma-separated) to execute the playbook on: " hosts_input
 
         local final_targets=()
-        local hosts_file="inventory/hosts-$ENVIRONMENT"
-        if [[ ! -f "$hosts_file" ]]; then
-            hosts_file="hosts"
-        fi
+        local hosts_file="inventory/hosts"
 
         IFS=',' read -ra targets_array <<< "$hosts_input"
         for target in "${targets_array[@]}"; do
@@ -649,10 +537,8 @@ select_playbook_and_run() {
             if [[ "$target" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
                 echo -e "${CYAN}    -> Searching for host with IP $target in $hosts_file...${NC}"
                 local host_key
-                host_key=$(awk -v ip="$target" '
-                    NF == 1 && /:/ { current_host = $1; sub(/:$/, "", current_host); }
-                    NF == 2 && ($1 == "ansible_host:" || $1 == "ansible_ip:") && $2 == ip { print current_host; exit; }
-                ' "$hosts_file")
+                # Updated awk to search for ansible_host=IP
+                host_key=$(awk -v ip="$target" '{for(i=2; i<=NF; i++) if ($i == "ansible_host="ip) {print $1; exit}}' "$hosts_file")
                 if [[ -n "$host_key" ]]; then
                     echo -e "${GREEN}    -> Found host key: '$host_key'. Targeting this host.${NC}"
                     final_targets+=("$host_key")
@@ -670,21 +556,32 @@ select_playbook_and_run() {
         if [[ $choice -gt 0 && $choice -le ${#g_playbook_paths[@]} ]]; then
             local playbook_to_run="${g_playbook_paths[$((choice-1))]}"
             echo -e "${GREEN}Executing $(basename "$playbook_to_run") on hosts '$target_hosts'...${NC}"
-            echo -e "${CYAN}Environment: $ENVIRONMENT${NC}"
-
+            
             local vault_pass_source="$VAULT_PASSWORD_FILE"
             
-            # If vault is enabled and no password file is set, prompt the user generically once.
-            if [[ "$USE_VAULT" = true && -z "$vault_pass_source" ]]; then
-                echo "Enter vault password:"
-                read -s vault_pass_source
-            fi
-
             # Now, find the correct vault file to use for credential injection, passing the password if we have it.
             local first_target_host
             first_target_host=$(echo "$target_hosts" | cut -d, -f1)
             local vault_file_to_use
-            vault_file_to_use=$(find_host_vault_file "$first_target_host" "$vault_pass_source")
+            vault_file_to_use=$(find_host_vault_file "$first_target_host" "")
+
+            local vault_is_encrypted=false
+            if [[ -n "$vault_file_to_use" && -f "$vault_file_to_use" ]]; then
+                if grep -q '^\$ANSIBLE_VAULT;' "$vault_file_to_use"; then
+                    vault_is_encrypted=true
+                fi
+            fi
+
+            # Only prompt for vault password if an encrypted vault file is found
+            if [[ "$vault_is_encrypted" = true ]]; then
+                if [[ -z "$vault_pass_source" ]]; then
+                    echo "Encrypted vault file detected: $vault_file_to_use"
+                    echo "Enter password for this vault file:"
+                    read -s vault_pass_source
+                fi
+            else
+                vault_pass_source=""
+            fi
 
             # Build and execute command
             local cmd
@@ -710,7 +607,6 @@ select_playbook_and_run() {
 # Function to handle Orion's Belt Security playbooks
 handle_security_hardening() {
     echo -e "${GREEN}=== Orion's Belt Security Playbooks ===${NC}"
-    echo -e "${CYAN}Environment: $ENVIRONMENT${NC}"
     echo ""
     echo -e "${YELLOW}Available Categories:${NC}"
     echo "1. OS Hardening"
@@ -733,7 +629,6 @@ handle_security_hardening() {
 # Function to handle OS Hardening submenu
 handle_os_hardening() {
     echo -e "${GREEN}=== OS Hardening ===${NC}"
-    echo -e "${CYAN}Environment: $ENVIRONMENT${NC}"
     echo ""
     echo -e "${YELLOW}Available OS Hardening Categories:${NC}"
     echo "1. Filesystem Security"
@@ -758,7 +653,6 @@ handle_os_hardening() {
 # Function to handle Network Device Hardening
 handle_network_hardening() {
     echo -e "${GREEN}=== Network Device Hardening ===${NC}"
-    echo -e "${CYAN}Environment: $ENVIRONMENT${NC}"
     echo ""
     echo -e "${YELLOW}Available Device Types:${NC}"
     echo "1. Cisco IOS"
@@ -781,7 +675,6 @@ handle_network_hardening() {
 # Function to handle Cloud Environment Hardening
 handle_cloud_hardening() {
     echo -e "${GREEN}=== Cloud Environment Hardening ===${NC}"
-    echo -e "${CYAN}Environment: $ENVIRONMENT${NC}"
     echo ""
     echo -e "${YELLOW}Available Cloud Platforms:${NC}"
     echo "1. Amazon Web Services (AWS)"
@@ -804,7 +697,6 @@ handle_cloud_hardening() {
 # Function to handle Custom playbooks
 handle_custom() {
     echo -e "${GREEN}=== Custom Playbooks ===${NC}"
-    echo -e "${CYAN}Environment: $ENVIRONMENT${NC}"
     echo ""
     select_playbook_and_run "Custom"
 }
@@ -812,7 +704,6 @@ handle_custom() {
 # Function to handle Server Configuration playbooks
 handle_server_configuration() {
     echo -e "${GREEN}=== Server Configuration ===${NC}"
-    echo -e "${CYAN}Environment: $ENVIRONMENT${NC}"
     echo ""
     echo -e "${YELLOW}Available Categories:${NC}"
     echo "1. Linux Configuration"
@@ -833,7 +724,6 @@ handle_server_configuration() {
 # Function to handle Linux Server Configuration
 handle_linux_configuration() {
     echo -e "${GREEN}=== Linux Server Configuration ===${NC}"
-    echo -e "${CYAN}Environment: $ENVIRONMENT${NC}"
     echo ""
     select_playbook_and_run "playbooks/server_configurations/linux"
 }
@@ -841,7 +731,6 @@ handle_linux_configuration() {
 # Function to handle Windows Server Configuration
 handle_windows_configuration() {
     echo -e "${GREEN}=== Windows Server Configuration ===${NC}"
-    echo -e "${CYAN}Environment: $ENVIRONMENT${NC}"
     echo ""
     select_playbook_and_run "playbooks/server_configurations/windows"
 }
@@ -885,7 +774,7 @@ while true; do
         1) handle_security_hardening ;;
         2) handle_server_configuration ;;
         3) handle_custom ;;
-        4) configure_environment ;;
+        4) configure_runner ;;
         5) echo -e "${GREEN}Goodbye!${NC}"; exit 0 ;;
         *) echo -e "${RED}Invalid choice. Please try again.${NC}" ;;
     esac

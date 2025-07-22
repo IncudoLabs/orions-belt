@@ -8,21 +8,20 @@ The primary goal is to keep sensitive and environment-specific files in a separa
 
 The `setup_env.sh` script automates the process of cloning your private repository and linking your private files into the correct locations within the `orions-belt` directory structure.
 
-The script works by creating **symbolic links** from your private repository to the corresponding directories in `orions-belt`. The following directories are targeted:
-- `inventory/`
-- `config/`
-- `group_vars/`
-- `host_vars/`
-- `Custom/`
+The script works by creating a **symbolic link** from your private repository to the `inventory/` directory in `orions-belt`. This single link makes your entire private inventory structure—including `hosts`, `group_vars`, and `host_vars`—available to Ansible.
 
-These directories are where you store environment-specific configurations:
--   **`group_vars/`**: Contains variables that apply to groups of hosts in your inventory. This is the standard location for `vault.yml` files containing encrypted secrets.
--   **`host_vars/`**: Contains variables that apply to specific individual hosts.
--   **`inventory/`**: Defines the hosts and groups that Ansible manages.
--   **`config/`**: Can be used for other application-specific configuration files.
--   **`Custom/`**: Intended for custom playbooks, roles, or modules that are specific to your environment.
+The `Custom/` directory, which is intended for your private playbooks, is also linked.
 
-All of these target directories in the main `orions-belt` repository are included in the `.gitignore` file, ensuring that your private, linked files are never accidentally committed to the public repository.
+### A Note on Playbook Execution: The Script is a Convenience, Not a Dependency
+
+Orion's Belt is designed to follow standard Ansible practices. Ansible's core engine is responsible for finding and loading all variables from your `inventory/` and `group_vars/` directories, ensuring a robust, predictable, and well-documented configuration process.
+
+**This has a significant benefit: your playbooks are now completely independent.**
+
+-   **You can run any playbook directly** using the standard `ansible-playbook` command.
+-   The `run_playbooks.sh` script is provided as a helpful **launcher with a user-friendly menu**, but it is no longer required for the playbooks to function correctly.
+
+This design decouples the playbook logic from the execution script, making the entire framework more robust, predictable, and easier to maintain.
 
 ## Setup Instructions
 

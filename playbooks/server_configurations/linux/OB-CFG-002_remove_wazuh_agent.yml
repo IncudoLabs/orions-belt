@@ -24,7 +24,7 @@
 ---
 - name: Remove Wazuh Agent from Linux
   hosts: "{{ target_hosts }}"
-  gather_facts: yes
+  gather_facts: no
   become: yes
   vars:
     wazuh_install_dir: /var/ossec
@@ -36,34 +36,39 @@
         state: stopped
         enabled: no
       ignore_errors: yes
+      delegate_to: "{{ ansible_delegate_to | default(omit) }}"
 
     - name: Remove Wazuh agent package (Debian/Ubuntu)
       ansible.builtin.apt:
         name: wazuh-agent
         state: absent
         purge: yes
-      when: ansible_os_family == "Debian"
+      when: ansible_pkg_mgr == "apt"
       register: apt_remove_result
+      delegate_to: "{{ ansible_delegate_to | default(omit) }}"
 
     - name: Remove Wazuh agent package (RedHat/CentOS/Fedora)
       ansible.builtin.yum:
         name: wazuh-agent
         state: absent
-      when: ansible_os_family == "RedHat"
+      when: ansible_pkg_mgr == "yum" or ansible_pkg_mgr == "dnf"
       register: yum_remove_result
+      delegate_to: "{{ ansible_delegate_to | default(omit) }}"
 
     - name: Remove Wazuh agent package (SLES/openSUSE)
-      ansible.builtin.zypper:
+      community.general.zypper:
         name: wazuh-agent
         state: absent
-      when: ansible_os_family == "Suse"
+      when: ansible_pkg_mgr == "zypper"
       register: zypper_remove_result
+      delegate_to: "{{ ansible_delegate_to | default(omit) }}"
 
     - name: Ensure Wazuh agent installation directory is removed (purge)
       ansible.builtin.file:
         path: "{{ wazuh_install_dir }}"
         state: absent
       register: dir_remove_result
+      delegate_to: "{{ ansible_delegate_to | default(omit) }}"
 
     - name: Display completion message
       debug:
@@ -73,6 +78,7 @@
         yum_remove_result.changed | default(false) or
         zypper_remove_result.changed | default(false) or
         dir_remove_result.changed | default(false)
+      delegate_to: "{{ ansible_delegate_to | default(omit) }}"
 
     - name: Display message if agent was not found or already removed
       debug:
@@ -82,4 +88,5 @@
         yum_remove_result.changed | default(false) or
         zypper_remove_result.changed | default(false) or
         dir_remove_result.changed | default(false)
-        ) 
+        )
+      delegate_to: "{{ ansible_delegate_to | default(omit) }}" 

@@ -19,29 +19,40 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# 
+# Example Ansible inventory for Orion's Belt
 #
+# - Use a descriptive name as the inventory key (leftmost column)
+# - Set ansible_host to the IP address for connection
+# - Optionally set ansible_host_name to the DNS hostname (if any)
+#
+# Example:
+# myserver1 ansible_host=192.168.1.10 ansible_host_name=myserver1.example.com
 
-# This is an example of a consolidated inventory file.
-# In your private repository, you would replace this with your actual hosts.
+[all:vars]
+ansible_user=root
 
-[production:children]
-linux_servers
-windows_servers
-network_devices
+[linux_servers]
+webserver1 ansible_host=192.168.1.10 ansible_host_name=web1.example.com
+appserver1 ansible_host=192.168.1.11
 
-[development:children]
-linux_servers
+[debian10]
+legacyos ansible_host=192.168.1.12
 
-[linux_servers:children]
-debian
+#for older os that don't support dependencies. I.e. Python 3.8+ delegate to control node
+[debian10:vars] 
+ansible_delegate_to=localhost
 
-[debian]
-webserver1 ansible_host=192.168.1.10
-dbserver1 ansible_host=192.168.1.11
+
+[windows_servers]
+winserver1 ansible_host=192.168.1.20 ansible_host_name=win1.example.com
 
 [network_devices:children]
 cisco_switches
 
 [cisco_switches]
-switch1 ansible_host=192.168.1.1
+switch1 ansible_host=192.168.1.100 ansible_host_name=switch1.example.com
+switch2 ansible_host=192.168.1.101
+
+# Add additional groups and hosts as needed, following this pattern.
 
