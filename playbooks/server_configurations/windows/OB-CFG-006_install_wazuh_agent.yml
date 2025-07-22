@@ -20,7 +20,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-# Playbook ID: OB-CFG-008
+# Playbook ID: OB-CFG-006
 ---
 - name: Install and Configure Wazuh Agent on Windows
   hosts: "{{ target_hosts }}"

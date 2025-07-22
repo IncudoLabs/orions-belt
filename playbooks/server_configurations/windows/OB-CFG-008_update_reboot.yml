@@ -20,7 +20,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-# Playbook ID: OB-CFG-007
+# Playbook ID: OB-CFG-008
 ---
 - name: Install Windows Updates and Reboot Intelligently
   hosts: "{{ target_hosts }}"
