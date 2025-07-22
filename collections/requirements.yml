@@ -1,0 +1,5 @@
+collections:
+  - name: ansible.windows
+  - name: cisco.ios
+  - name: community.general
+  - name: community.windows 

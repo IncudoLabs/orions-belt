@@ -21,16 +21,12 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-# This file is intentionally empty.
-# 
-# Environment-specific hosts files should be used instead:
-# - hosts-development
-# - hosts-staging  
-# - hosts-production
+# This file is for storing encrypted secrets (vaulted variables) that apply to ALL hosts.
+# In your private repo, you would copy this to vault.yml, encrypt it, and add your secrets.
 #
-# The run_playbooks.sh script will automatically use the appropriate
-# environment-specific hosts file based on the current environment setting.
-# This file serves as a fallback only if the environment-specific file is missing.
+# To encrypt this file:
+# ansible-vault encrypt inventory/group_vars/all/vault.yml.example
 #
-# To add hosts for a specific environment, create the corresponding file:
-# Example: hosts-production, hosts-staging, or hosts-development
+# Example variables:
+# wazuh_registration_password: "your_secret_password"
+# another_secret_api_key: "another_secret_value" 

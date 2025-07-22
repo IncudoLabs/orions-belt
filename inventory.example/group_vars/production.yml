@@ -21,27 +21,11 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 
-[defaults]
-# Enforce host key checking for security.
-# This will cause prompts for new SSH host keys.
-# To avoid prompts, add the host key to your known_hosts file first.
-host_key_checking = False
-inventory = inventory/
-group_name_invalid_chars = ignore
+# This file contains configuration overrides for the 'production' environment.
+# Variables defined here will take precedence over group_vars/all/main.yml
+# when a playbook is run against hosts in the [production] group.
 
-[ssh_connection]
-retries = 3 
-pipelining = True
-
-[paramiko_connection]
-# --- Legacy Algorithm for Network Devices ---
-# The network_cli connection type often uses paramiko as its SSH backend.
-# These arguments are specifically for that connection type to ensure
-# compatibility with older network devices.
-# Force paramiko to use password and keyboard-interactive authentication methods
-auth_methods = password,keyboard-interactive
-# Disable public key authentication and automatic key loading.
-# The `look_for_keys` setting is needed to silence a deprecation warning.
-look_for_keys = False
-# Disable PTY allocation - critical for Cisco device compatibility
-pty = False 
+network:
+  ssh:
+    allow_root_login: false
+    password_authentication: false 

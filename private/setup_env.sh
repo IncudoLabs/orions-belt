@@ -114,8 +114,9 @@ link_files() {
 
 link_directory() {
     local dir_name=$1
+    local dest_subpath=${2:-$1} # Use second argument as subpath, default to dir_name
     local src_path="$PRIVATE_REPO_DIR/$dir_name"
-    local dest_path="$ORIONS_BELT_DIR/$dir_name"
+    local dest_path="$ORIONS_BELT_DIR/$dest_subpath"
 
     echo "--- Linking directory $src_path to $dest_path ---"
 
@@ -153,20 +154,14 @@ read -p "Enter your choice (1 or 2): " main_choice
 case "$main_choice" in
   1)
     clone_repo
-    link_files "inventory"
-    link_files "config"
-    link_files "Custom"
-    link_directory "group_vars"
-    link_directory "host_vars"
+    link_directory "inventory"
+    link_directory "Custom"
     echo "All tasks completed successfully."
     ;;
   2)
     echo "Skipping clone, proceeding with linking..."
-    link_files "inventory"
-    link_files "config"
-    link_files "Custom"
-    link_directory "group_vars"
-    link_directory "host_vars"
+    link_directory "inventory"
+    link_directory "Custom"
     echo "All symbolic links have been created successfully."
     ;;
   *)

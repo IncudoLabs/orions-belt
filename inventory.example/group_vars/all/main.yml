@@ -20,45 +20,11 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-#
-# == Ansible Inventory Template (hosts.example) ==
-#
-# This is a template for your Ansible inventory file. To run these playbooks,
-# you must create your own local inventory based on this example.
-#
-# --- INSTRUCTIONS ---
-# 1. Copy this file to a new file named `hosts`:
-#    cp hosts.example hosts
-#
-# 2. Edit the new `hosts` file to include your server hostnames, IP addresses,
-#    and any necessary connection variables.
-#
-# The `hosts` file is already listed in .gitignore to prevent you from
-# accidentally committing your infrastructure details to the public repository.
-#
-# --- EXAMPLE ENTRIES ---
-    
 
-linux:
- children:
-    debian12:
-    amazonLinux:
+# This file contains base configuration variables that apply to ALL hosts.
+# In your private repo, you would copy this to main.yml and customize it.
 
-windows:
- children:
-  adControllers:
-  exchangeServers:
-  rdsServers:
-
-debian12:
- hosts:
-  firstDebianServer:
-   ansible_host:192.168.x.x
-   description: "firstDebianServer"
-
-amazonLinux:
- hosts:
-  wazuh:
-   ansible_host: 192.168.0.0
-   description: "Wazuh Security Platform"
-
+network:
+  ssh:
+    port: 22
+    allow_root_login: false 
