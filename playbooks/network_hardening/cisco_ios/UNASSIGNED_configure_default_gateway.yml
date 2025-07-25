@@ -45,6 +45,17 @@
   become_method: enable
 
   tasks:
+    - name: "DEBUG - Check cisco.ios collection version"
+      run_once: true
+      ansible.builtin.command: "ansible-galaxy collection list cisco.ios"
+      register: galaxy_list_output
+      delegate_to: localhost
+
+    - name: "DEBUG - Display cisco.ios version found by playbook"
+      run_once: true
+      ansible.builtin.debug:
+        var: galaxy_list_output.stdout
+
     - name: Gather current default gateway
       cisco.ios.ios_command:
         commands: "show ip route"

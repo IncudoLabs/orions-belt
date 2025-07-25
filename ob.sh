@@ -603,13 +603,11 @@ select_playbook_and_run() {
             cmd=$(build_ansible_command "$playbook_to_run" "target_hosts=$target_hosts" "$vault_pass_source" "$vault_file_to_use")
             echo ""
             
-            # Execute the command
-            export ANSIBLE_CONFIG="$(pwd)/ansible.cfg"
-            eval "$cmd"
+            # Execute the command, ensuring ANSIBLE_CONFIG is set for the command's environment.
+            # This is more robust than exporting and then running the command separately.
+            eval "ANSIBLE_CONFIG='$(pwd)/ansible.cfg' $cmd"
             
             local cmd_exit_code=$?
-            # Clean up temporary vault pass file if it was created
-            unset ANSIBLE_CONFIG
             
             return $cmd_exit_code
         else
