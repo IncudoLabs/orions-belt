@@ -87,7 +87,7 @@ setup_virtual_environment() {
     # Install ansible-galaxy collections if requirements file exists
     if [ -f "collections/requirements.yml" ]; then
         echo "Installing Ansible collections from collections/requirements.yml..."
-        "$VENV_DIR/bin/ansible-galaxy" collection install -r "collections/requirements.yml" > /dev/null
+        "$VENV_DIR/bin/ansible-galaxy" collection install -r "collections/requirements.yml" -p ./collections > /dev/null
     fi
     
     # Set the VENV_ANSIBLE path after ensuring the virtual environment exists

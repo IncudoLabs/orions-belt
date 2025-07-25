@@ -1,5 +1,6 @@
 collections:
   - name: ansible.windows
   - name: cisco.ios
+    version: "10.1.1"
   - name: community.general
   - name: community.windows 
