@@ -72,7 +72,7 @@ setup_virtual_environment() {
         fi
         
         echo "Virtual environment created. Installing dependencies from requirements.txt..."
-        "$VENV_DIR/bin/pip" install -r requirements.txt
+        "$VENV_DIR/bin/pip" install -q -r requirements.txt
         if [ $? -ne 0 ]; then
             echo -e "${RED}Failed to install dependencies. Please check requirements.txt and your internet connection.${NC}"
             exit 1
@@ -81,13 +81,13 @@ setup_virtual_environment() {
     else
         # Always ensure dependencies are in sync on every run
         # This is an idempotent action and will be fast if everything is up to date
-        "$VENV_DIR/bin/pip" install -r requirements.txt
+        "$VENV_DIR/bin/pip" install -q -r requirements.txt
     fi
 
     # Install ansible-galaxy collections if requirements file exists
     if [ -f "collections/requirements.yml" ]; then
         echo "Installing Ansible collections from collections/requirements.yml..."
-        "$VENV_DIR/bin/ansible-galaxy" collection install -r "collections/requirements.yml"
+        "$VENV_DIR/bin/ansible-galaxy" collection install -r "collections/requirements.yml" > /dev/null
     fi
     
     # Set the VENV_ANSIBLE path after ensuring the virtual environment exists
@@ -312,17 +312,31 @@ g_playbook_names=()
 
 # Function to find the most specific vault file for a host
 find_host_vault_file() {
-    local host_key="$1" # Assume this is always a valid hostname from inventory
-    local vault_pass_source="$2" # Can be a file path or the raw password
+    local target_name="$1" # Can be a host or a group name
+    local vault_pass_source="$2"
     local hosts_file="inventory/hosts"
 
-    # 1. Check for host-specific vault file
+    # 1. Check if the target name corresponds directly to a group_vars vault file.
+    # This handles the case where the user enters a group name.
+    if [[ -f "inventory/group_vars/$target_name/vault.yml" ]]; then
+        echo "inventory/group_vars/$target_name/vault.yml"
+        return
+    fi
+    if [[ -f "inventory/group_vars/${target_name}.yml" && "$(head -n1 "inventory/group_vars/${target_name}.yml" 2>/dev/null)" == *"\$ANSIBLE_VAULT;"* ]]; then
+        echo "inventory/group_vars/${target_name}.yml"
+        return
+    fi
+
+    # If not a direct group, assume it's a host and proceed with host-specific logic.
+    local host_key="$target_name"
+
+    # 2. Check for host-specific vault file
     if [[ -f "inventory/host_vars/$host_key/vault.yml" ]]; then
         echo "inventory/host_vars/$host_key/vault.yml"
         return
     fi
 
-    # 2. Check group_vars for the host's groups using a robust method
+    # 3. Check group_vars for the host's groups using ansible-inventory
     local groups
     local inventory_cmd="ansible-inventory -i \"$hosts_file\" --list"
 
@@ -330,6 +344,7 @@ find_host_vault_file() {
     if [[ -f "$vault_pass_source" ]]; then
         inventory_cmd="$inventory_cmd --vault-password-file \"$vault_pass_source\""
     elif [[ -n "$vault_pass_source" ]]; then
+        # Use process substitution for raw password
         inventory_cmd="$inventory_cmd --vault-password-file <(echo \"$vault_pass_source\")"
     fi
     
@@ -340,16 +355,20 @@ host_to_find = sys.argv[1]
 try:
     inventory = json.load(sys.stdin)
     host_groups = []
-    for group, data in inventory.items():
-        if group.startswith("_") or group == "all": continue
-        if isinstance(data, dict) and "hosts" in data:
-            if host_to_find in data.get("hosts", []):
-                host_groups.append(group)
+    # Find all groups the host belongs to
+    for group, data in inventory.get("_meta", {}).get("hostvars", {}).get(host_to_find, {}).get("group_names", []):
+        host_groups.append(group)
+    # A different way to find it if the above fails
+    if not host_groups:
+        for group, data in inventory.items():
+            if group.startswith("_") or group == "all": continue
+            if isinstance(data, dict) and "hosts" in data:
+                if host_to_find in data.get("hosts", []):
+                    host_groups.append(group)
     print(" ".join(host_groups))
-except (json.JSONDecodeError, IndexError, TypeError):
+except (json.JSONDecodeError, IndexError, TypeError, KeyError):
     sys.exit(0)
 ' "$host_key" 2>/dev/null)
-
 
     for group in $groups; do
         # Check for directory-style group_vars
@@ -357,20 +376,19 @@ except (json.JSONDecodeError, IndexError, TypeError):
             echo "inventory/group_vars/$group/vault.yml"
             return
         fi
-        # Check for file-style group_vars
-        if [[ -f "inventory/group_vars/${group}.yml" && "$(head -n1 "inventory/group_vars/${group}.yml")" == "\$ANSIBLE_VAULT;1.1;AES256" ]]; then
+        # Check for file-style group_vars (and ensure it's a vault file)
+        if [[ -f "inventory/group_vars/${group}.yml" && "$(head -n1 "inventory/group_vars/${group}.yml" 2>/dev/null)" == *"\$ANSIBLE_VAULT;"* ]]; then
              echo "inventory/group_vars/${group}.yml"
              return
         fi
     done
     
-    # 3. Fallback to the 'all' group vault file
+    # 4. Fallback to the 'all' group vault file
     if [[ -f "inventory/group_vars/all/vault.yml" ]]; then
         echo "inventory/group_vars/all/vault.yml"
         return
     fi
     
-    # 4. Fallback to legacy vault.yml is removed as it's no longer used
     echo "" # Return empty if no vault file is found
 }
 
@@ -382,7 +400,7 @@ build_ansible_command() {
     local vault_pass_source="$3" # This can now be a file path OR the raw password
     local vault_file_for_injection="$4" # The specific vault file to decrypt for injection
 
-    local cmd="\"$VENV_ANSIBLE\" \"$playbook_path\" -vvv"
+    local cmd="\"$VENV_ANSIBLE\" \"$playbook_path\""
 
     # Add inventory file
     local hosts_file="inventory/hosts"
@@ -559,29 +577,26 @@ select_playbook_and_run() {
             
             local vault_pass_source="$VAULT_PASSWORD_FILE"
             
-            # Now, find the correct vault file to use for credential injection, passing the password if we have it.
+            # Broadly check if any vault-encrypted files exist in the inventory.
+            # This helps decide if we need to prompt for a password, avoiding the chicken-and-egg problem
+            # of needing a password to find the file that tells us we need a password.
+            if grep -rql '^\$ANSIBLE_VAULT;' inventory/ >/dev/null 2>&1; then
+                # If we found an encrypted file and a password hasn't been provided via settings, prompt for it now.
+                if [[ -z "$vault_pass_source" ]]; then
+                    echo "Encrypted Ansible Vault file(s) detected in inventory."
+                    read -s -p "Enter Vault password: " vault_pass_source
+                    echo "" # Newline after password entry
+                fi
+            fi
+            
+            # Now that we (potentially) have a password, we can try to find the specific vault file
+            # for the target host. This is primarily for the network credential injection logic.
             local first_target_host
             first_target_host=$(echo "$target_hosts" | cut -d, -f1)
+            
+            # Pass the password to the find function so it can read vaulted inventories
             local vault_file_to_use
-            vault_file_to_use=$(find_host_vault_file "$first_target_host" "")
-
-            local vault_is_encrypted=false
-            if [[ -n "$vault_file_to_use" && -f "$vault_file_to_use" ]]; then
-                if grep -q '^\$ANSIBLE_VAULT;' "$vault_file_to_use"; then
-                    vault_is_encrypted=true
-                fi
-            fi
-
-            # Only prompt for vault password if an encrypted vault file is found
-            if [[ "$vault_is_encrypted" = true ]]; then
-                if [[ -z "$vault_pass_source" ]]; then
-                    echo "Encrypted vault file detected: $vault_file_to_use"
-                    echo "Enter password for this vault file:"
-                    read -s vault_pass_source
-                fi
-            else
-                vault_pass_source=""
-            fi
+            vault_file_to_use=$(find_host_vault_file "$first_target_host" "$vault_pass_source")
 
             # Build and execute command
             local cmd

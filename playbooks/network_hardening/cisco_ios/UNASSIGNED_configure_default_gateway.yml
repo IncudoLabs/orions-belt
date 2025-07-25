@@ -67,12 +67,14 @@
       ansible.builtin.pause:
         prompt: "Current gateway is {{ current_gateway_ip }}. Do you want to change it? (yes/no)"
       register: want_to_change
+      run_once: true
 
     - name: Prompt for new gateway IP
       ansible.builtin.pause:
         prompt: "Enter the new default gateway IP address"
       register: new_gateway_prompt
       when: want_to_change.user_input | lower == 'yes'
+      run_once: true
 
     - name: Set default gateway
       cisco.ios.ios_config:
