@@ -1,7 +1,7 @@
 # This file contains the Python dependencies required to run the Orion's Belt playbooks.
 # Use 'pip install -r requirements.txt' within a virtual environment.
 
-ansible-core>=2.12
+ansible-core==2.18.7
 paramiko
 pywinrm
 pykerberos

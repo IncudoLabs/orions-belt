@@ -72,7 +72,7 @@ setup_virtual_environment() {
         fi
         
         echo "Virtual environment created. Installing dependencies from requirements.txt..."
-        "$VENV_DIR/bin/pip" install -q -r requirements.txt
+        "$VENV_DIR/bin/pip" install -q --upgrade -r requirements.txt
         if [ $? -ne 0 ]; then
             echo -e "${RED}Failed to install dependencies. Please check requirements.txt and your internet connection.${NC}"
             exit 1
@@ -81,7 +81,18 @@ setup_virtual_environment() {
     else
         # Always ensure dependencies are in sync on every run
         # This is an idempotent action and will be fast if everything is up to date
-        "$VENV_DIR/bin/pip" install -q -r requirements.txt
+        "$VENV_DIR/bin/pip" install -q --upgrade -r requirements.txt
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Failed to sync dependencies. Please check requirements.txt and your internet connection.${NC}"
+            exit 1
+        fi
+    fi
+
+    # Explicitly check if ansible-playbook was installed before proceeding
+    if [ ! -f "$VENV_DIR/bin/ansible-playbook" ]; then
+        echo -e "${RED}FATAL: 'ansible-playbook' was not found in the virtual environment after installation attempt.${NC}"
+        echo -e "${YELLOW}This indicates a failure during 'pip install -r requirements.txt'. Review the output above for errors.${NC}"
+        exit 1
     fi
 
     # Install ansible-galaxy collections if requirements file exists
@@ -121,7 +132,7 @@ NC='\033[0m' # No Color
 KERBEROS_INITIALIZED=false
 KERBEROS_PRINCIPAL=""
 VAULT_PASSWORD_FILE=""
-clear
+# clear
 # Function to display menu
 show_menu() {
     echo -e "${YELLOW}=== Orion's Belt Ansible Playbook Runner ===${NC}"
@@ -603,9 +614,9 @@ select_playbook_and_run() {
             cmd=$(build_ansible_command "$playbook_to_run" "target_hosts=$target_hosts" "$vault_pass_source" "$vault_file_to_use")
             echo ""
             
-            # Execute the command, ensuring ANSIBLE_CONFIG is set for the command's environment.
-            # This is more robust than exporting and then running the command separately.
-            eval "ANSIBLE_CONFIG='$(pwd)/ansible.cfg' $cmd"
+            # Execute the command with environment variables set directly for this execution.
+            # This is the most robust way to ensure the correct paths are used.
+            ANSIBLE_CONFIG="$(pwd)/ansible.cfg" ANSIBLE_COLLECTIONS_PATH="$(pwd)/collections" eval "$cmd"
             
             local cmd_exit_code=$?
             
@@ -796,4 +807,3 @@ while true; do
     read -p "Press Enter to continue..."
     clear
 done
-
