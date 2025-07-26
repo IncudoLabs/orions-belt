@@ -55,46 +55,86 @@
 #
 
 - name: "VTP Configuration: Configure Cisco VTP"
-  hosts: all
+  hosts: "{{ target_hosts }}"
   gather_facts: false
-
-  vars_prompt:
-    - name: vtp_domain
-      prompt: "Enter the VTP domain name"
-      private: no
-
-    - name: vtp_password
-      prompt: "Enter the VTP password"
-      private: yes
-
-    - name: vtp_version
-      prompt: "Enter the VTP version (1, 2, or 3)"
-      private: no
-      default: "2"
+  connection: network_cli
+  become: yes
+  become_method: enable
 
   tasks:
-    - name: Set VTP domain and configure as server
-      cisco.ios.ios_vtp:
-        domain: "{{ vtp_domain }}"
-        password: "{{ vtp_password }}"
-        version: "{{ vtp_version }}"
-        mode: server
-        state: present
-      notify: save_config
-      when: inventory_hostname in groups['vtp_master']
+    - name: Gather VTP status from one host to check
+      cisco.ios.ios_command:
+        commands: "show vtp status"
+      register: vtp_status_output
+      run_once: true
 
-    - name: Set VTP domain and configure as client
-      cisco.ios.ios_vtp:
-        domain: "{{ vtp_domain }}"
-        password: "{{ vtp_password }}"
-        version: "{{ vtp_version }}"
-        mode: client
-        state: present
+    - name: Extract current VTP domain
+      run_once: true
+      ansible.builtin.set_fact:
+        current_vtp_domain: "{{ (vtp_status_output.stdout[0] | regex_findall('VTP Domain Name\\s+:\\s*(\\S+)') | first) | default('Not Set') }}"
+
+    - name: Extract current VTP mode
+      run_once: true
+      ansible.builtin.set_fact:
+        current_vtp_mode: "{{ (vtp_status_output.stdout[0] | regex_findall('Feature VLAN:[\\s\\S]*?VTP Operating Mode\\s+:\\s*(\\w+)') | first) | default('Not Set') }}"
+
+    - name: Extract current VTP version
+      run_once: true
+      ansible.builtin.set_fact:
+        current_vtp_version: "{{ (vtp_status_output.stdout[0] | regex_findall('VTP version running\\s+:\\s*(\\d+)') | first) | default('Not Set') }}"
+
+    - name: Ask if user wants to change VTP settings
+      ansible.builtin.pause:
+        prompt: "Current VTP settings on one device are:\n  Domain: {{ current_vtp_domain }}\n  Mode: {{ current_vtp_mode }}\n  Version: {{ current_vtp_version }}\n\nDo you want to change the VTP settings for all targeted devices? (yes/no)"
+      register: want_to_change
+      run_once: true
+
+    - name: Prompt for new VTP settings
+      when: want_to_change.user_input | lower == 'yes'
+      run_once: true
+      block:
+        - name: Prompt for new VTP domain
+          ansible.builtin.pause:
+            prompt: "Enter the new VTP domain name"
+          register: new_vtp_domain_prompt
+
+        - name: Prompt for new VTP password
+          ansible.builtin.pause:
+            prompt: "Enter the new VTP password"
+          register: new_vtp_password_prompt
+
+        - name: Prompt for new VTP version
+          ansible.builtin.pause:
+            prompt: "Enter the new VTP version (1, 2, or 3)"
+            default: "2"
+          register: new_vtp_version_prompt
+
+    - name: Configure VTP on Server
+      when: 
+        - inventory_hostname in groups['vtp_master']
+        - want_to_change.user_input | lower == 'yes'
+      cisco.ios.ios_config:
+        lines:
+          - "vtp domain {{ new_vtp_domain_prompt.user_input }}"
+          - "vtp mode server"
+          - "vtp version {{ new_vtp_version_prompt.user_input }}"
+          - "vtp password {{ new_vtp_password_prompt.user_input }}"
       notify: save_config
-      when: inventory_hostname in groups['vtp_clients']
+
+    - name: Configure VTP on Clients
+      when: 
+        - inventory_hostname in groups['vtp_clients']
+        - want_to_change.user_input | lower == 'yes'
+      cisco.ios.ios_config:
+        lines:
+          - "vtp domain {{ new_vtp_domain_prompt.user_input }}"
+          - "vtp mode client"
+          - "vtp version {{ new_vtp_version_prompt.user_input }}"
+          - "vtp password {{ new_vtp_password_prompt.user_input }}"
+      notify: save_config
 
   handlers:
     - name: save_config
       listen: "save_config"
       cisco.ios.ios_config:
-        save_when: modified 
+        save_when: modified
