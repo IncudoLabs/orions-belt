@@ -98,39 +98,47 @@
             prompt: "Enter the new VTP domain name"
           register: new_vtp_domain_prompt
 
+        - name: Ask if user wants to set VTP password
+          ansible.builtin.pause:
+            prompt: "Do you want to set a VTP password? (yes/no)"
+          register: want_password_prompt
+
         - name: Prompt for new VTP password
+          when: want_password_prompt.user_input | lower == 'yes'
           ansible.builtin.pause:
             prompt: "Enter the new VTP password"
           register: new_vtp_password_prompt
 
         - name: Prompt for new VTP version
           ansible.builtin.pause:
-            prompt: "Enter the new VTP version (1, 2, or 3)"
-            default: "2"
+            prompt: "Enter the new VTP version (1, 2, or 3) [default: 2]"
           register: new_vtp_version_prompt
 
-    - name: Configure VTP on Server
+    - name: Set default VTP version if not provided
+      when: want_to_change.user_input | lower == 'yes'
+      run_once: true
+      ansible.builtin.set_fact:
+        vtp_version_to_use: "{{ new_vtp_version_prompt.user_input | default('2') }}"
+
+    - name: Configure VTP (with password)
       when: 
-        - inventory_hostname in groups['vtp_master']
         - want_to_change.user_input | lower == 'yes'
+        - want_password_prompt.user_input | lower == 'yes'
       cisco.ios.ios_config:
         lines:
           - "vtp domain {{ new_vtp_domain_prompt.user_input }}"
-          - "vtp mode server"
-          - "vtp version {{ new_vtp_version_prompt.user_input }}"
+          - "vtp version {{ vtp_version_to_use }}"
           - "vtp password {{ new_vtp_password_prompt.user_input }}"
       notify: save_config
 
-    - name: Configure VTP on Clients
+    - name: Configure VTP (without password)
       when: 
-        - inventory_hostname in groups['vtp_clients']
         - want_to_change.user_input | lower == 'yes'
+        - want_password_prompt.user_input | lower != 'yes'
       cisco.ios.ios_config:
         lines:
           - "vtp domain {{ new_vtp_domain_prompt.user_input }}"
-          - "vtp mode client"
-          - "vtp version {{ new_vtp_version_prompt.user_input }}"
-          - "vtp password {{ new_vtp_password_prompt.user_input }}"
+          - "vtp version {{ vtp_version_to_use }}"
       notify: save_config
 
   handlers:
