@@ -12,6 +12,8 @@ Custom/
 Custom
 inventory/
 inventory
+collections/*
+!collections/requirements.yml
 
 # Ignore the private directory but allow the setup script and its README
 private/*
