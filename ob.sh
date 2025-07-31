@@ -149,9 +149,10 @@ show_menu() {
     echo -e "${YELLOW}Available Categories:${NC}"
     echo "1. Orion's Belt Security Playbooks"
     echo "2. Server Configuration"
-    echo "3. Custom Playbooks"
-    echo "4. Runner Settings"
-    echo "5. Exit"
+    echo "3. Utilities & Diagnostics"
+    echo "4. Custom Playbooks"
+    echo "5. Runner Settings"
+    echo "6. Exit"
     echo ""
 }
 
@@ -725,6 +726,46 @@ handle_custom() {
     select_playbook_and_run "Custom"
 }
 
+# Function to handle Utilities and Diagnostics
+handle_utilities() {
+    echo -e "${GREEN}=== Utilities & Diagnostics ===${NC}"
+    echo ""
+    echo -e "${YELLOW}Available Categories:${NC}"
+    echo "1. Connectivity Tests"
+    echo "2. System Diagnostics"
+    echo "3. Verification Tools"
+    echo "4. Back to Main Menu"
+    echo ""
+    
+    read -p "Enter your choice (1-4): " util_choice
+    
+    case $util_choice in
+        1) handle_connectivity_tests ;;
+        2) handle_system_diagnostics ;;
+        3) handle_verification_tools ;;
+        4) return ;;
+        *) echo -e "${RED}Invalid choice. Please try again.${NC}" ;;
+    esac
+}
+
+# Function to handle Connectivity Tests
+handle_connectivity_tests() {
+    echo -e "${CYAN}=== Connectivity Tests ===${NC}"
+    select_playbook_and_run "playbooks/utilities/connectivity"
+}
+
+# Function to handle System Diagnostics
+handle_system_diagnostics() {
+    echo -e "${CYAN}=== System Diagnostics ===${NC}"
+    select_playbook_and_run "playbooks/utilities/diagnostics"
+}
+
+# Function to handle Verification Tools
+handle_verification_tools() {
+    echo -e "${CYAN}=== Verification Tools ===${NC}"
+    select_playbook_and_run "playbooks/utilities/verification"
+}
+
 # Function to handle Server Configuration playbooks
 handle_server_configuration() {
     echo -e "${GREEN}=== Server Configuration ===${NC}"
@@ -792,14 +833,15 @@ show_help() {
 # Main menu loop
 while true; do
     show_menu
-    read -p "Enter your choice (1-5): " main_choice
+    read -p "Enter your choice (1-6): " main_choice
     
     case $main_choice in
         1) handle_security_hardening ;;
         2) handle_server_configuration ;;
-        3) handle_custom ;;
-        4) configure_runner ;;
-        5) echo -e "${GREEN}Goodbye!${NC}"; exit 0 ;;
+        3) handle_utilities ;;
+        4) handle_custom ;;
+        5) configure_runner ;;
+        6) echo -e "${GREEN}Goodbye!${NC}"; exit 0 ;;
         *) echo -e "${RED}Invalid choice. Please try again.${NC}" ;;
     esac
     
