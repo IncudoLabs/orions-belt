@@ -1,0 +1,293 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2023 - present Expiscor Group Inc.
+#
+# This file is part of Orion's Belt Project (https://github.com/IncudoLABS/orions-belt).
+#
+# Published by the IncudoLABS.
+# Original author: Marko Sarunac <128757181+SaruWiz@users.noreply.github.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+---
+- name: Distribute SSH Keys for Orion's Belt Agent
+  hosts: "{{ target_hosts }}"
+  gather_facts: true
+  become: false  # Start without sudo, use become when needed
+  
+  vars:
+    # Default values - can be overridden
+    target_user: "{{ ansible_user | default('ansible') }}"
+    key_username: "{{ target_user }}"
+    # add_to_root will be picked up from vault or extra vars
+    agent_hostname: "{{ ansible_hostname | default('anvil-agent') }}"
+    
+    # First-time authentication support
+    # These can be provided via --extra-vars for initial connections
+    # ansible_user: username to connect as
+    # ansible_password: password for initial authentication
+    # ansible_ssh_pass: alternative password variable
+    
+    # Key comment format for easy identification
+    key_comment: "orions-belt-agent-{{ agent_hostname }}"
+    
+    # Paths - handle root user correctly
+    authorized_keys_path: "{{ '/root/.ssh/authorized_keys' if key_username == 'root' else '/home/' + key_username + '/.ssh/authorized_keys' }}"
+    root_authorized_keys_path: "/root/.ssh/authorized_keys"
+    ssh_dir_path: "{{ '/root/.ssh' if key_username == 'root' else '/home/' + key_username + '/.ssh' }}"
+    root_ssh_dir_path: "/root/.ssh"
+    
+    # SSH key paths to try (in order of preference)
+    ssh_key_paths:
+      - "~/.ssh/id_ed25519.pub"
+      - "~/.ssh/id_rsa.pub"
+      - "~/.ssh/id_ecdsa.pub"
+      - "~/.ssh/id_dsa.pub"
+  
+  pre_tasks:
+    - name: Validate target_hosts is provided
+      fail:
+        msg: |
+          CRITICAL SECURITY ERROR: target_hosts variable is not set!
+          
+          This playbook requires explicit specification of target hosts to prevent
+          accidental execution on unintended systems.
+          
+          Usage: ansible-playbook OB-UTIL-001_distribute_ssh_keys.yml --extra-vars "target_hosts=your_hosts"
+          
+          Examples:
+          - target_hosts=webservers
+          - target_hosts=db_servers
+          - target_hosts=192.168.1.10
+          - target_hosts=server1,server2,server3
+      when: target_hosts is not defined or target_hosts == ""
+    
+    - name: Display vault information
+      debug:
+        msg: |
+          🔐 Vault Information:
+          - Vault file: inventory/group_vars/all/vault.yml
+          - Ansible user: {{ ansible_user | default('NOT_SET') }}
+          - Using vault credentials: {{ ansible_password is defined or ansible_ssh_pass is defined }}
+          - SSH common args: {{ ansible_ssh_common_args | default('NOT_SET') }}
+          - SSH extra args: {{ ansible_ssh_extra_args | default('NOT_SET') }}
+      run_once: true
+    
+    - name: List available vault files
+      find:
+        paths: "inventory"
+        patterns: "vault.yml"
+        file_type: file
+      register: vault_files
+      delegate_to: localhost
+      run_once: true
+    
+    - name: Display vault files found
+      debug:
+        msg: |
+          📁 Vault Files Found:
+          {% for file in vault_files.files %}
+          - {{ file.path }}
+          {% endfor %}
+      run_once: true
+    
+    - name: Find available SSH public keys
+      find:
+        paths: "~/.ssh"
+        patterns: "*.pub"
+        file_type: file
+      register: available_keys
+      delegate_to: localhost
+      run_once: true
+    
+    - name: Set agent_public_key from available keys
+      set_fact:
+        agent_public_key: "{{ available_keys.files[0].content | default('') }}"
+      when: available_keys.files | length > 0
+      delegate_to: localhost
+      run_once: true
+    
+    - name: Read SSH public key from file
+      slurp:
+        src: "{{ item }}"
+      register: key_file_content
+      when: agent_public_key is not defined or agent_public_key | length == 0
+      loop: "{{ ssh_key_paths }}"
+      delegate_to: localhost
+      run_once: true
+      ignore_errors: true
+    
+    - name: Set agent_public_key from file content
+      set_fact:
+        agent_public_key: "{{ item.content | b64decode }}"
+      when: 
+        - agent_public_key is not defined or agent_public_key | length == 0
+        - item.content is defined
+      loop: "{{ key_file_content.results }}"
+      delegate_to: localhost
+      run_once: true
+    
+    - name: Validate agent_public_key is available
+      fail:
+        msg: |
+          No SSH public key found. Please ensure one of the following exists:
+          - ~/.ssh/id_ed25519.pub
+          - ~/.ssh/id_rsa.pub
+          - ~/.ssh/id_ecdsa.pub
+          - ~/.ssh/id_dsa.pub
+          
+          Or provide agent_public_key variable manually.
+      when: agent_public_key is not defined or agent_public_key | length == 0
+    
+    - name: Validate agent_public_key format
+      fail:
+        msg: "agent_public_key must be a valid SSH public key starting with ssh-rsa, ssh-ed25519, or ecdsa"
+      when: >
+        not (agent_public_key.startswith('ssh-rsa') or 
+             agent_public_key.startswith('ssh-ed25519') or 
+             agent_public_key.startswith('ecdsa'))
+    
+    - name: Display distribution plan
+      debug:
+        msg: |
+          SSH Key Distribution Plan:
+          - Target User: {{ target_user }}
+          - Key Username: {{ key_username }}
+          - Add to Root: {{ add_to_root }}
+          - Agent Hostname: {{ agent_hostname }}
+          - Key Comment: {{ key_comment }}
+          - Authorized Keys Path: {{ authorized_keys_path }}
+          - Public Key: {{ agent_public_key[:50] }}...
+  
+  tasks:
+    - name: Ensure SSH directory exists for key user
+      file:
+        path: "{{ ssh_dir_path }}"
+        state: directory
+        mode: '0700'
+        owner: "{{ key_username }}"
+        group: "{{ key_username }}"
+      become: true
+      become_user: "{{ key_username }}"
+    
+    - name: Ensure SSH directory has correct permissions
+      file:
+        path: "{{ ssh_dir_path }}"
+        mode: '0700'
+        owner: "{{ key_username }}"
+        group: "{{ key_username }}"
+      become: true
+    
+    - name: Add SSH public key to user's authorized_keys
+      ansible.posix.authorized_key:
+        user: "{{ key_username }}"
+        key: "{{ agent_public_key }}"
+        comment: "{{ key_comment }}"
+        state: present
+        exclusive: false
+      become: true
+      register: key_add_result
+    
+    - name: Display key addition result for user
+      debug:
+        msg: "SSH key added to {{ key_username }}'s authorized_keys: {{ key_add_result.changed }}"
+    
+    - name: Verify key was added correctly
+      shell: "grep '{{ key_comment }}' {{ authorized_keys_path }}"
+      register: key_verification
+      failed_when: key_verification.rc != 0
+      become: true
+    
+    - name: Display verification result
+      debug:
+        msg: "Key verification successful for {{ key_username }}"
+    
+    # Optional: Add to root account
+    - name: Check if adding to root is requested
+      debug:
+        msg: "Adding SSH key to root account as requested"
+      when: add_to_root is defined and add_to_root | bool
+    
+    - name: Ensure root SSH directory exists
+      file:
+        path: "{{ root_ssh_dir_path }}"
+        state: directory
+        mode: '0700'
+        owner: root
+        group: root
+      become: true
+      when: add_to_root is defined and add_to_root | bool
+    
+    - name: Add SSH public key to root's authorized_keys
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ agent_public_key }}"
+        comment: "{{ key_comment }}"
+        state: present
+        exclusive: false
+      become: true
+      register: root_key_add_result
+      when: add_to_root is defined and add_to_root | bool
+    
+    - name: Display key addition result for root
+      debug:
+        msg: "SSH key added to root's authorized_keys: {{ root_key_add_result.changed }}"
+      when: add_to_root is defined and add_to_root | bool
+    
+    - name: Verify key was added correctly to root
+      shell: "grep '{{ key_comment }}' {{ root_authorized_keys_path }}"
+      register: root_key_verification
+      failed_when: root_key_verification.rc != 0
+      become: true
+      when: add_to_root is defined and add_to_root | bool
+    
+    - name: Display root verification result
+      debug:
+        msg: "Key verification successful for root"
+      when: add_to_root is defined and add_to_root | bool
+    
+    - name: Test SSH connectivity with new key
+      ping:
+      delegate_to: "{{ inventory_hostname }}"
+      become: false
+      ignore_errors: true
+      register: connectivity_test
+    
+    - name: Display connectivity test result
+      debug:
+        msg: "SSH connectivity test result: {{ connectivity_test.ping }}"
+    
+    - name: Final status report
+      debug:
+        msg: |
+          SSH Key Distribution Complete:
+          - Target: {{ inventory_hostname }}
+          - User: {{ key_username }} - {{ 'SUCCESS' if key_add_result.changed else 'ALREADY_EXISTS' }}
+          - Root: {{ 'SUCCESS' if (add_to_root is defined and add_to_root and root_key_add_result.changed) else 'SKIPPED' if not (add_to_root is defined and add_to_root) else 'ALREADY_EXISTS' }}
+          - Connectivity: {{ 'SUCCESS' if connectivity_test.ping == 'pong' else 'FAILED' }}
+  
+  post_tasks:
+    - name: Summary of key distribution
+      debug:
+        msg: |
+          ========================================
+          SSH Key Distribution Summary
+          ========================================
+          Host: {{ inventory_hostname }}
+          Agent: {{ agent_hostname }}
+          Keys Added:
+          - {{ key_username }}: {{ 'YES' if key_add_result.changed else 'ALREADY_EXISTS' }}
+          - root: {{ 'YES' if (add_to_root is defined and add_to_root and root_key_add_result.changed) else 'NO' if not (add_to_root is defined and add_to_root) else 'ALREADY_EXISTS' }}
+          Connectivity: {{ 'WORKING' if connectivity_test.ping == 'pong' else 'NEEDS_TESTING' }}
+          ======================================== 
