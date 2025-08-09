@@ -1,0 +1,196 @@
+name: Playbook Standards Enforcement
+on:
+  pull_request:
+    branches: ['contrib', 'IL-*']
+    paths: ['playbooks/**/*.yml', 'templates/**/*.yml']
+  push:
+    branches: ['contrib', 'IL-*']
+    paths: ['playbooks/**/*.yml', 'templates/**/*.yml']
+
+jobs:
+  basic-validation:
+    name: Basic Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install dependencies
+        run: |
+          pip install ansible-core ansible-lint
+          
+      - name: Validate YAML syntax
+        run: |
+          echo "Validating YAML syntax for modified playbooks..."
+          for file in $(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} | grep '\.yml$' | grep -E '(playbooks|templates)'); do
+            if [ -f "$file" ]; then
+              echo "Checking syntax for: $file"
+              ansible-playbook --syntax-check "$file" || exit 1
+            fi
+          done
+        if: github.event_name == 'push'
+        
+      - name: Validate YAML syntax (PR)
+        run: |
+          echo "Validating YAML syntax for PR changes..."
+          for file in $(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep '\.yml$' | grep -E '(playbooks|templates)'); do
+            if [ -f "$file" ]; then
+              echo "Checking syntax for: $file"
+              ansible-playbook --syntax-check "$file" || exit 1
+            fi
+          done
+        if: github.event_name == 'pull_request'
+        
+      - name: Check file naming conventions
+        run: |
+          echo "Checking file naming conventions..."
+          for file in $(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} | grep '\.yml$' | grep -E '(playbooks|templates)'); do
+            if [ -f "$file" ]; then
+              filename=$(basename "$file")
+              if [[ ! "$filename" =~ ^(OB-[0-9]+_[a-z_]+\.yml|OB-[A-Z]+-[0-9]+_[a-z_]+\.yml|OB-TPL-[0-9]+_[a-z_]+\.yml)$ ]]; then
+                echo "❌ Invalid filename: $filename"
+                echo "   Expected format: OB-[ID]_[description].yml or OB-[PREFIX]-[ID]_[description].yml"
+                exit 1
+              else
+                echo "✅ Valid filename: $filename"
+              fi
+            fi
+          done
+        if: github.event_name == 'push'
+        
+      - name: Check file naming conventions (PR)
+        run: |
+          echo "Checking file naming conventions..."
+          for file in $(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep '\.yml$' | grep -E '(playbooks|templates)'); do
+            if [ -f "$file" ]; then
+              filename=$(basename "$file")
+              if [[ ! "$filename" =~ ^(OB-[0-9]+_[a-z_]+\.yml|OB-[A-Z]+-[0-9]+_[a-z_]+\.yml|OB-TPL-[0-9]+_[a-z_]+\.yml)$ ]]; then
+                echo "❌ Invalid filename: $filename"
+                echo "   Expected format: OB-[ID]_[description].yml or OB-[PREFIX]-[ID]_[description].yml"
+                exit 1
+              else
+                echo "✅ Valid filename: $filename"
+              fi
+            fi
+          done
+        if: github.event_name == 'pull_request'
+
+  linting:
+    name: Ansible Linting
+    runs-on: ubuntu-latest
+    needs: basic-validation
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install dependencies
+        run: |
+          pip install ansible-core ansible-lint
+          
+      - name: Run ansible-lint
+        run: |
+          echo "Running ansible-lint on modified playbooks..."
+          for file in $(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} | grep '\.yml$' | grep -E '(playbooks|templates)'); do
+            if [ -f "$file" ]; then
+              echo "Linting: $file"
+              ansible-lint "$file" || exit 1
+            fi
+          done
+        if: github.event_name == 'push'
+        
+      - name: Run ansible-lint (PR)
+        run: |
+          echo "Running ansible-lint on PR changes..."
+          for file in $(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep '\.yml$' | grep -E '(playbooks|templates)'); do
+            if [ -f "$file" ]; then
+              echo "Linting: $file"
+              ansible-lint "$file" || exit 1
+            fi
+          done
+        if: github.event_name == 'pull_request'
+
+  security-checks:
+    name: Security Standards
+    runs-on: ubuntu-latest
+    needs: basic-validation
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Check for target_hosts usage
+        run: |
+          echo "Checking for target_hosts usage..."
+          for file in $(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} | grep '\.yml$' | grep -E '(playbooks|templates)'); do
+            if [ -f "$file" ]; then
+              echo "Checking target_hosts in: $file"
+              if ! grep -q "hosts:.*target_hosts" "$file"; then
+                echo "❌ Missing target_hosts usage in: $file"
+                echo "   All playbooks must use 'hosts: \"{{ target_hosts }}'\" for security"
+                exit 1
+              else
+                echo "✅ target_hosts found in: $file"
+              fi
+            fi
+          done
+        if: github.event_name == 'push'
+        
+      - name: Check for target_hosts usage (PR)
+        run: |
+          echo "Checking for target_hosts usage..."
+          for file in $(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep '\.yml$' | grep -E '(playbooks|templates)'); do
+            if [ -f "$file" ]; then
+              echo "Checking target_hosts in: $file"
+              if ! grep -q "hosts:.*target_hosts" "$file"; then
+                echo "❌ Missing target_hosts usage in: $file"
+                echo "   All playbooks must use 'hosts: \"{{ target_hosts }}'\" for security"
+                exit 1
+              else
+                echo "✅ target_hosts found in: $file"
+              fi
+            fi
+          done
+        if: github.event_name == 'pull_request'
+        
+      - name: Check for hardcoded secrets
+        run: |
+          echo "Checking for hardcoded secrets..."
+          for file in $(git diff --name-only ${{ github.event.before }} ${{ github.event.after }} | grep '\.yml$' | grep -E '(playbooks|templates)'); do
+            if [ -f "$file" ]; then
+              echo "Checking for secrets in: $file"
+              if grep -q "password.*=.*['\"][^'\"]*['\"]" "$file"; then
+                echo "❌ Potential hardcoded secret found in: $file"
+                echo "   Use Ansible Vault for sensitive data"
+                exit 1
+              else
+                echo "✅ No hardcoded secrets found in: $file"
+              fi
+            fi
+          done
+        if: github.event_name == 'push'
+        
+      - name: Check for hardcoded secrets (PR)
+        run: |
+          echo "Checking for hardcoded secrets..."
+          for file in $(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep '\.yml$' | grep -E '(playbooks|templates)'); do
+            if [ -f "$file" ]; then
+              echo "Checking for secrets in: $file"
+              if grep -q "password.*=.*['\"][^'\"]*['\"]" "$file"; then
+                echo "❌ Potential hardcoded secret found in: $file"
+                echo "   Use Ansible Vault for sensitive data"
+                exit 1
+              else
+                echo "✅ No hardcoded secrets found in: $file"
+              fi
+            fi
+          done
+        if: github.event_name == 'pull_request'

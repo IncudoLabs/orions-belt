@@ -1,0 +1,43 @@
+---
+# Ansible Lint Configuration for Orion's Belt Playbooks
+# This file enforces key security and quality rules
+
+# Enforce fully qualified collection names (FQCN) for clarity and security
+rule_list:
+  - fqcn[action-core]
+
+# Warn on use of shell/command, forcing developers to justify their use
+warn_list:
+  - command-instead-of-module
+  - command-instead-of-shell
+  - shell-instead-of-module
+
+# Error on critical security issues
+error_list:
+  - no-log-password
+  - unsafe-file-permissions
+  - risky-shell-pipe
+  - risky-file-permissions
+
+# Skip certain rules that may not apply to our use cases
+skip_list:
+  - yaml  # Allow some YAML formatting flexibility
+  - trailing-spaces  # Less critical for our workflow
+
+# Custom rules for Orion's Belt standards
+custom_rules:
+  - name: "target_hosts-validation"
+    description: "Ensure target_hosts validation is present"
+    pattern: "target_hosts is not defined"
+    severity: error
+
+  - name: "vault-usage"
+    description: "Encourage vault usage for secrets"
+    pattern: "password.*=.*['\"][^'\"]*['\"]"
+    severity: warning
+    message: "Consider using Ansible Vault for password variables"
+
+# Formatting preferences
+formatting:
+  max_line_length: 120
+  indent_size: 2

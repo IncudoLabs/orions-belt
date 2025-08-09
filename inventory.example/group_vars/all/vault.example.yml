@@ -30,3 +30,10 @@
 # Example variables:
 # wazuh_registration_password: "your_secret_password"
 # another_secret_api_key: "another_secret_value" 
+
+# Default SSH credentials for initial connections
+# These are used by the SSH key distribution playbook
+ansible_user: youruser_name
+ansible_password: "your_password"
+ansible_become_password: "your_password"
+add_to_root: "true"

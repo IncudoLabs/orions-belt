@@ -1,0 +1,16 @@
+# Global owners - these people will be requested for review on any PR
+* @SaruWiz
+
+# Specific file/directory owners
+playbooks/ @SaruWiz
+docs/ @SaruWiz
+.github/ @SaruWiz
+templates/ @SaruWiz
+scripts/ @SaruWiz
+
+# Configuration files
+*.yml @SaruWiz
+*.yaml @SaruWiz
+*.md @SaruWiz
+ansible.cfg @SaruWiz
+ob.sh @SaruWiz
